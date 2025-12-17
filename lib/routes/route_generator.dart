@@ -9,6 +9,7 @@ import '../screens/onboarding/onboarding_screen3.dart';
 import '../screens/auth/signin_screen.dart';
 import '../screens/auth/signup_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
+import '../screens/auth/verify_email_screen.dart';
 import '../screens/home/home_screen.dart';
 import '../screens/home/add_medicine_screen.dart';
 import '../screens/home/edit_medicine_screen.dart';
@@ -16,11 +17,17 @@ import '../screens/home/medicine_detail_screen.dart';
 import '../screens/schedule/schedule_screen.dart';
 import '../screens/history/history_screen.dart';
 import '../screens/profile/profile_screen.dart';
+import '../screens/profile/edit_profile_screen.dart';
+import '../screens/profile/settings_screen.dart';
 
 class RouteGenerator {
   static Route<dynamic> generateRoute(RouteSettings settings) {
-    // Check if user is authenticated for protected routes
-    final isAuthenticated = FirebaseAuth.instance.currentUser != null;
+    // Check if user is authenticated and email verified for protected routes
+    final user = FirebaseAuth.instance.currentUser;
+    final isAuthenticated = user != null;
+    final isEmailVerified = user?.emailVerified ?? false;
+    final isFullyAuthenticated = isAuthenticated && isEmailVerified;
+
     final protectedRoutes = [
       AppRoutes.home,
       AppRoutes.addMedicine,
@@ -29,10 +36,16 @@ class RouteGenerator {
       AppRoutes.schedule,
       AppRoutes.history,
       AppRoutes.profile,
+      AppRoutes.editProfile,
+      AppRoutes.settings,
     ];
 
-    if (protectedRoutes.contains(settings.name) && !isAuthenticated) {
-      // Redirect to sign in if not authenticated
+    if (protectedRoutes.contains(settings.name) && !isFullyAuthenticated) {
+      // If authenticated but not email verified, redirect to verify email
+      if (isAuthenticated && !isEmailVerified) {
+        return MaterialPageRoute(builder: (_) => const VerifyEmailScreen());
+      }
+      // If not authenticated, redirect to sign in
       return MaterialPageRoute(builder: (_) => const SignInScreen());
     }
 
@@ -53,6 +66,8 @@ class RouteGenerator {
         return MaterialPageRoute(builder: (_) => const SignUpScreen());
       case AppRoutes.forgotPassword:
         return MaterialPageRoute(builder: (_) => const ForgotPasswordScreen());
+      case AppRoutes.verifyEmail:
+        return MaterialPageRoute(builder: (_) => const VerifyEmailScreen());
 
       case AppRoutes.home:
         return MaterialPageRoute(builder: (_) => const HomeScreen());
@@ -72,6 +87,10 @@ class RouteGenerator {
 
       case AppRoutes.profile:
         return MaterialPageRoute(builder: (_) => const ProfileScreen());
+      case AppRoutes.editProfile:
+        return MaterialPageRoute(builder: (_) => const EditProfileScreen());
+      case AppRoutes.settings:
+        return MaterialPageRoute(builder: (_) => const SettingsScreen());
     }
 
     return MaterialPageRoute(

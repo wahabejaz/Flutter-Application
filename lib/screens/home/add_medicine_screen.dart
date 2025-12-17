@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../config/app_colors.dart';
 import '../../models/medicine_model.dart';
 import '../../services/db/medicine_dao.dart';
@@ -110,6 +111,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     try {
       final now = DateTime.now();
       final medicine = Medicine(
+        uid: FirebaseAuth.instance.currentUser?.uid,
         name: _nameController.text.trim(),
         dosage: _dosageController.text.trim(),
         frequency: _frequency,

@@ -39,8 +39,16 @@ class _SignInScreenState extends State<SignInScreen> {
         _passwordController.text,
       );
 
-      if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(context, AppRoutes.home, (route) => false);
+      // Check email verification for email/password sign in
+      final user = FirebaseAuth.instance.currentUser;
+      if (user != null && user.emailVerified) {
+        if (mounted) {
+          Navigator.pushNamedAndRemoveUntil(context, AppRoutes.home, (route) => false);
+        }
+      } else {
+        if (mounted) {
+          Navigator.pushNamedAndRemoveUntil(context, AppRoutes.verifyEmail, (route) => false);
+        }
       }
     } on FirebaseAuthException catch (e) {
       if (mounted) {

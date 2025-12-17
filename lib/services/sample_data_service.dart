@@ -14,7 +14,7 @@ class SampleDataService {
 
   /// Check if sample data already exists
   Future<bool> hasSampleData() async {
-    final medicines = await _medicineDAO.getAllMedicines();
+    final medicines = await _medicineDAO.getAllMedicinesUnscoped();
     return medicines.isNotEmpty;
   }
 
@@ -230,7 +230,7 @@ class SampleDataService {
     await db.delete('schedules');
     
     // Cancel all notifications and delete medicines
-    final medicines = await _medicineDAO.getAllMedicines();
+    final medicines = await _medicineDAO.getAllMedicinesUnscoped();
     for (var medicine in medicines) {
       if (medicine.id != null) {
         await _scheduler.cancelMedicineReminders(medicine.id!);

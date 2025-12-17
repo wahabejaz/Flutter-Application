@@ -2,6 +2,7 @@
 /// Represents a medicine/medication entry in the app
 class Medicine {
   final int? id;
+  final String? uid; // Firebase Auth UID
   final String name;
   final String dosage;
   final String frequency; // e.g., "Daily", "Weekly", "Unit"
@@ -17,6 +18,7 @@ class Medicine {
 
   Medicine({
     this.id,
+    this.uid,
     required this.name,
     required this.dosage,
     required this.frequency,
@@ -35,6 +37,7 @@ class Medicine {
   Map<String, dynamic> toMap() {
     return {
       'id': id,
+      'uid': uid,
       'name': name,
       'dosage': dosage,
       'frequency': frequency,
@@ -54,6 +57,7 @@ class Medicine {
   factory Medicine.fromMap(Map<String, dynamic> map) {
     return Medicine(
       id: map['id'] as int?,
+      uid: map['uid'] as String?,
       name: map['name'] as String,
       dosage: map['dosage'] as String,
       frequency: map['frequency'] as String,
@@ -72,6 +76,7 @@ class Medicine {
   /// Create a copy of Medicine with updated fields
   Medicine copyWith({
     int? id,
+    String? uid,
     String? name,
     String? dosage,
     String? frequency,
@@ -87,6 +92,7 @@ class Medicine {
   }) {
     return Medicine(
       id: id ?? this.id,
+      uid: uid ?? this.uid,
       name: name ?? this.name,
       dosage: dosage ?? this.dosage,
       frequency: frequency ?? this.frequency,

@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../routes/app_routes.dart';
 import '../onboarding/onboarding_controller.dart';
-import '../../services/sample_data_service.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -12,8 +11,6 @@ class SplashScreen extends StatefulWidget {
 }
 
 class _SplashScreenState extends State<SplashScreen> {
-  final SampleDataService _sampleDataService = SampleDataService();
-
   @override
   void initState() {
     super.initState();
@@ -21,19 +18,16 @@ class _SplashScreenState extends State<SplashScreen> {
   }
 
   Future<void> _initializeAndNavigate() async {
-    // Initialize sample data if needed (runs in background)
-    _sampleDataService.hasSampleData().then((hasData) {
-      if (!hasData) {
-        _sampleDataService.addSampleData();
-      }
-    });
+    // Removed sample data initialization - no dummy data should be added
 
     await Future.delayed(const Duration(seconds: 2));   // splash duration
 
     if (!mounted) return;
 
     bool firstTime = await OnboardingController.isFirstTime();
-    bool loggedIn = FirebaseAuth.instance.currentUser != null;
+    final user = FirebaseAuth.instance.currentUser;
+    bool loggedIn = user != null;
+    bool emailVerified = user?.emailVerified ?? false;
 
     if (firstTime) {
       if (mounted) {
@@ -41,8 +35,14 @@ class _SplashScreenState extends State<SplashScreen> {
       }
     } else {
       if (loggedIn) {
-        if (mounted) {
-          Navigator.pushReplacementNamed(context, AppRoutes.home);
+        if (emailVerified) {
+          if (mounted) {
+            Navigator.pushReplacementNamed(context, AppRoutes.home);
+          }
+        } else {
+          if (mounted) {
+            Navigator.pushReplacementNamed(context, AppRoutes.verifyEmail);
+          }
         }
       } else {
         if (mounted) {

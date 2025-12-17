@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../routes/app_routes.dart';
 import '../../config/app_colors.dart';
-import '../../services/sample_data_service.dart';
 
 /// Profile Screen
 /// Shows user profile and app settings
@@ -14,36 +13,6 @@ class ProfileScreen extends StatefulWidget {
 }
 
 class _ProfileScreenState extends State<ProfileScreen> {
-  final SampleDataService _sampleDataService = SampleDataService();
-  bool _isResetting = false;
-
-  Future<void> _loadSampleData() async {
-    setState(() => _isResetting = true);
-    try {
-      await _sampleDataService.clearAllData();
-      await _sampleDataService.addSampleData();
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Sample data loaded successfully!'),
-            backgroundColor: AppColors.green,
-          ),
-        );
-        // Navigate to home to see the data
-        Navigator.pushReplacementNamed(context, AppRoutes.home);
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error loading sample data: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() => _isResetting = false);
-      }
-    }
-  }
 
   Future<void> _resetAppData() async {
     final confirmed = await showDialog<bool>(
@@ -70,29 +39,14 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
 
     if (confirmed == true) {
-      setState(() => _isResetting = true);
-      try {
-        await _sampleDataService.clearAllData();
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('All data has been reset'),
-              backgroundColor: AppColors.green,
-            ),
-          );
-          // Navigate to home to refresh
-          Navigator.pushReplacementNamed(context, AppRoutes.home);
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('Error resetting data: $e')),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() => _isResetting = false);
-        }
+      // TODO: Implement user-specific data reset
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Data reset not implemented yet'),
+            backgroundColor: AppColors.orange,
+          ),
+        );
       }
     }
   }
@@ -174,11 +128,7 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     title: const Text('Edit Profile'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Edit profile not implemented yet'),
-                        ),
-                      );
+                      Navigator.pushNamed(context, AppRoutes.editProfile);
                     },
                   ),
                   const Divider(height: 1),
@@ -187,34 +137,16 @@ class _ProfileScreenState extends State<ProfileScreen> {
                     title: const Text('Settings'),
                     trailing: const Icon(Icons.chevron_right),
                     onTap: () {
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        const SnackBar(
-                          content: Text('Settings not implemented yet'),
-                        ),
-                      );
+                      Navigator.pushNamed(context, AppRoutes.settings);
                     },
-                  ),
-                  const Divider(height: 1),
-                  ListTile(
-                    leading: const Icon(Icons.add_circle, color: AppColors.green),
-                    title: const Text('Load Sample Data'),
-                    subtitle: const Text('Add sample medicines for testing'),
-                    trailing: const Icon(Icons.chevron_right),
-                    onTap: _loadSampleData,
                   ),
                   const Divider(height: 1),
                   ListTile(
                     leading: const Icon(Icons.refresh, color: Colors.orange),
                     title: const Text('Reset App Data'),
                     subtitle: const Text('Delete all medicines and history'),
-                    trailing: _isResetting
-                        ? const SizedBox(
-                            width: 20,
-                            height: 20,
-                            child: CircularProgressIndicator(strokeWidth: 2),
-                          )
-                        : const Icon(Icons.chevron_right),
-                    onTap: _isResetting ? null : _resetAppData,
+                    trailing: const Icon(Icons.chevron_right),
+                    onTap: _resetAppData,
                   ),
                 ],
               ),

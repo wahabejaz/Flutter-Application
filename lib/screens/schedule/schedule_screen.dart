@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../config/app_colors.dart';
 import '../../services/db/sqlite_service.dart';
 import '../../services/reminder_scheduler.dart';
@@ -29,6 +30,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   Future<void> _loadSchedules() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
     final db = await _dbService.database;
     final dateStr = DateFormat('yyyy-MM-dd').format(_selectedDate);
 
@@ -36,9 +40,9 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       SELECT s.*, m.name, m.dosage, m.iconColor
       FROM schedules s
       INNER JOIN medicines m ON s.medicineId = m.id
-      WHERE date(s.scheduledDate) = ?
+      WHERE date(s.scheduledDate) = ? AND m.uid = ?
       ORDER BY s.scheduledTime ASC
-    ''', [dateStr]);
+    ''', [dateStr, currentUser.uid]);
 
     setState(() {
       _schedules = schedules;
@@ -46,12 +50,16 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
   }
 
   Future<void> _loadEvents() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
     final db = await _dbService.database;
     final events = await db.rawQuery('''
       SELECT DISTINCT date(scheduledDate) as date
-      FROM schedules
-      WHERE status = 'pending'
-    ''');
+      FROM schedules s
+      INNER JOIN medicines m ON s.medicineId = m.id
+      WHERE s.status = 'pending' AND m.uid = ?
+    ''', [currentUser.uid]);
 
     final Map<DateTime, List<String>> map = {};
     for (var event in events) {
@@ -62,9 +70,10 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
       // Get medicine count for this date
       final count = await db.rawQuery('''
         SELECT COUNT(*) as count
-        FROM schedules
-        WHERE date(scheduledDate) = ? AND status = 'pending'
-      ''', [dateStr]);
+        FROM schedules s
+        INNER JOIN medicines m ON s.medicineId = m.id
+        WHERE date(s.scheduledDate) = ? AND s.status = 'pending' AND m.uid = ?
+      ''', [dateStr, currentUser.uid]);
       
       final countValue = count.first['count'] as int;
       if (countValue > 0) {

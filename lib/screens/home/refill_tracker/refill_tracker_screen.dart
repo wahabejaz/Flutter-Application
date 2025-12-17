@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../../config/app_colors.dart';
 import '../../../models/medicine_model.dart';
 import '../../../services/db/medicine_dao.dart';
@@ -26,7 +27,10 @@ class _RefillTrackerScreenState extends State<RefillTrackerScreen> {
   Future<void> _loadLowStockMedicines() async {
     setState(() => _isLoading = true);
     try {
-      final allMedicines = await _medicineDAO.getAllMedicines();
+      final user = FirebaseAuth.instance.currentUser;
+      if (user == null) return;
+
+      final allMedicines = await _medicineDAO.getAllMedicines(user.uid);
       // Filter medicines with low stock (less than 10)
       _lowStockMedicines = allMedicines.where((medicine) =>
         medicine.stockCount < 10 && medicine.stockCount > 0

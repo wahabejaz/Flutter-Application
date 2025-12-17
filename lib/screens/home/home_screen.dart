@@ -7,6 +7,7 @@ import '../../services/notification_service.dart';
 import '../../widgets/progress_circle.dart';
 import 'refill_tracker/refill_tracker_screen.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 
 /// Home Screen
 /// Main screen showing daily progress, quick actions, and today's schedule
@@ -40,6 +41,15 @@ class _HomeScreenState extends State<HomeScreen> {
 
   void _setupNotificationCallback() {
     _notificationService.setNotificationTapCallback(_handleNotificationTap);
+    
+    // Check if app was launched by a notification
+    final initialNotificationId = _notificationService.getInitialNotificationId();
+    if (initialNotificationId != null) {
+      // Handle the initial notification after a short delay to ensure UI is ready
+      Future.delayed(const Duration(milliseconds: 500), () {
+        _handleNotificationTap(initialNotificationId);
+      });
+    }
   }
 
   Future<void> _handleNotificationTap(int notificationId) async {
@@ -113,18 +123,21 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _loadTodaySchedules() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return; // No user logged in
+
     final db = await _dbService.database;
     final today = DateTime.now();
     final todayStr = DateFormat('yyyy-MM-dd').format(today);
 
-    // Get all schedules for today with medicine details
+    // Get all schedules for today with medicine details, filtered by current user's uid
     final schedules = await db.rawQuery('''
       SELECT s.*, m.name, m.dosage, m.iconColor
       FROM schedules s
       INNER JOIN medicines m ON s.medicineId = m.id
-      WHERE date(s.scheduledDate) = ?
+      WHERE date(s.scheduledDate) = ? AND m.uid = ?
       ORDER BY s.scheduledTime ASC
-    ''', [todayStr]);
+    ''', [todayStr, currentUser.uid]);
 
     // Check for missed doses and mark them automatically (after grace period)
     final now = DateTime.now();
@@ -160,9 +173,9 @@ class _HomeScreenState extends State<HomeScreen> {
       SELECT s.*, m.name, m.dosage, m.iconColor
       FROM schedules s
       INNER JOIN medicines m ON s.medicineId = m.id
-      WHERE date(s.scheduledDate) = ?
+      WHERE date(s.scheduledDate) = ? AND m.uid = ?
       ORDER BY s.scheduledTime ASC
-    ''', [todayStr]);
+    ''', [todayStr, currentUser.uid]);
 
     setState(() {
       _todaySchedules = updatedSchedules;

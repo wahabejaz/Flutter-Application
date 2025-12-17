@@ -7,6 +7,7 @@ class AppRoutes {
   static const String signin = '/signin';
   static const String signup = '/signup';
   static const String forgotPassword = '/forgot-password';
+  static const String verifyEmail = '/verify-email';
 
   static const String home = '/home';
   static const String addMedicine = '/add-medicine';
@@ -16,4 +17,6 @@ class AppRoutes {
   static const String schedule = '/schedule';
   static const String history = '/history';
   static const String profile = '/profile';
+  static const String editProfile = '/edit-profile';
+  static const String settings = '/settings';
 }

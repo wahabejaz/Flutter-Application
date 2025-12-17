@@ -51,13 +51,16 @@ class _SignUpScreenState extends State<SignUpScreen> {
         _passwordController.text,
       );
 
+      // Send email verification
+      await FirebaseAuth.instance.currentUser?.sendEmailVerification();
+
       // Update user display name
       await FirebaseAuth.instance.currentUser?.updateDisplayName(
         _fullNameController.text.trim(),
       );
 
       if (mounted) {
-        Navigator.pushNamedAndRemoveUntil(context, AppRoutes.home, (route) => false);
+        Navigator.pushNamedAndRemoveUntil(context, AppRoutes.verifyEmail, (route) => false);
       }
     } on FirebaseAuthException catch (e) {
       if (mounted) {

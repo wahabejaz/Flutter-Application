@@ -14,10 +14,18 @@ class NotificationService {
 
   bool _initialized = false;
   Function(int)? _onNotificationTapCallback;
+  int? _initialNotificationId;
 
   /// Set callback for notification tap handling
   void setNotificationTapCallback(Function(int) callback) {
     _onNotificationTapCallback = callback;
+  }
+
+  /// Get the notification ID that launched the app (if any)
+  int? getInitialNotificationId() {
+    final id = _initialNotificationId;
+    _initialNotificationId = null; // Clear after reading
+    return id;
   }
 
   /// Initialize notification service
@@ -50,6 +58,15 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
 
+    // Check for initial notification that launched the app
+    final initialNotification = await _notifications.getNotificationAppLaunchDetails();
+    if (initialNotification?.didNotificationLaunchApp == true) {
+      _initialNotificationId = initialNotification?.notificationResponse?.id;
+    }
+
+    // Create notification channel for Android
+    await _createNotificationChannel();
+
     // Request permissions for Android 13+
     await _requestPermissions();
 
@@ -63,6 +80,24 @@ class NotificationService {
     await androidPlugin?.requestNotificationsPermission();
   }
 
+  /// Create notification channel for Android
+  Future<void> _createNotificationChannel() async {
+    const androidChannel = AndroidNotificationChannel(
+      'medicine_reminder_channel',
+      'Medicine Reminders',
+      description: 'Notifications for medicine reminders',
+      importance: Importance.high,
+      playSound: true,
+      showBadge: true,
+      enableVibration: true,
+      enableLights: true,
+    );
+
+    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    await androidPlugin?.createNotificationChannel(androidChannel);
+  }
+
   /// Handle notification tap
   void _onNotificationTapped(NotificationResponse response) {
     // Handle notification tap - call the callback with notification ID
@@ -73,7 +108,7 @@ class NotificationService {
   }
 
   /// Schedule a notification for a specific date and time
-  /// 
+  ///
   /// [id] - Unique notification ID
   /// [title] - Notification title
   /// [body] - Notification body/message
@@ -151,6 +186,9 @@ class NotificationService {
       channelDescription: 'Notifications for medicine reminders',
       importance: Importance.high,
       priority: Priority.high,
+      showWhen: true,
+      enableVibration: true,
+      playSound: true,
     );
 
     const iosDetails = DarwinNotificationDetails(
@@ -164,7 +202,12 @@ class NotificationService {
       iOS: iosDetails,
     );
 
-    await _notifications.show(id, title, body, notificationDetails);
+    await _notifications.show(
+      id,
+      title,
+      body,
+      notificationDetails,
+    );
   }
 }
 

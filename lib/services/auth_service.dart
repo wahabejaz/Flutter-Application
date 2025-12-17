@@ -9,7 +9,7 @@ import 'db/sqlite_service.dart';
 class AuthService {
   final firebase_auth.FirebaseAuth _auth = firebase_auth.FirebaseAuth.instance;
   final GoogleSignIn _googleSignIn = GoogleSignIn();
-  final SQLiteService _dbService = SQLiteService();
+  final SQLiteService dbService = SQLiteService();
 
   /// Get current user
   firebase_auth.User? get currentUser => _auth.currentUser;
@@ -97,7 +97,7 @@ class AuthService {
   Future<void> _saveUserToLocalDatabase(firebase_auth.User? firebaseUser) async {
     if (firebaseUser == null) return;
 
-    final db = await _dbService.database;
+    final db = await dbService.database;
 
     final user = User(
       uid: firebaseUser.uid,
@@ -117,7 +117,7 @@ class AuthService {
 
   /// Get user data from local database
   Future<User?> getUserFromLocalDatabase(String uid) async {
-    final db = await _dbService.database;
+    final db = await dbService.database;
     final maps = await db.query(
       'users',
       where: 'uid = ?',

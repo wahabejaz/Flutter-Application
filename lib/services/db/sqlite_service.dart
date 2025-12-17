@@ -31,7 +31,7 @@ class SQLiteService {
     // Open/create the database
     return await openDatabase(
       path,
-      version: 1,
+      version: 2,
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -44,6 +44,7 @@ class SQLiteService {
     await db.execute('''
       CREATE TABLE medicines (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
+        uid TEXT NOT NULL,
         name TEXT NOT NULL,
         dosage TEXT NOT NULL,
         frequency TEXT NOT NULL,
@@ -105,8 +106,11 @@ class SQLiteService {
   /// Handle database upgrades
   /// Called when database version changes
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
+    if (oldVersion < 2) {
+      // Add uid column to medicines table
+      await db.execute('ALTER TABLE medicines ADD COLUMN uid TEXT NOT NULL DEFAULT ""');
+    }
     // Handle future database migrations here
-    // For now, we'll just recreate tables if needed
   }
 
   /// Close database connection

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:firebase_auth/firebase_auth.dart';
 import '../../config/app_colors.dart';
 import '../../services/db/sqlite_service.dart';
 
@@ -25,14 +26,17 @@ class _HistoryScreenState extends State<HistoryScreen> {
   }
 
   Future<void> _loadHistory() async {
+    final currentUser = FirebaseAuth.instance.currentUser;
+    if (currentUser == null) return;
+
     final db = await _dbService.database;
     
-    String whereClause = '';
-    List<dynamic> whereArgs = [];
+    String whereClause = 'WHERE m.uid = ?';
+    List<dynamic> whereArgs = [currentUser.uid];
     
     if (_selectedFilter != 'All') {
-      whereClause = 'WHERE h.status = ?';
-      whereArgs = [_selectedFilter.toLowerCase()];
+      whereClause += ' AND h.status = ?';
+      whereArgs.add(_selectedFilter.toLowerCase());
     }
 
     final history = await db.rawQuery('''
