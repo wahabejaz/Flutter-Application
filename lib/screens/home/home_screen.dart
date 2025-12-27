@@ -18,7 +18,7 @@ class HomeScreen extends StatefulWidget {
   State<HomeScreen> createState() => _HomeScreenState();
 }
 
-class _HomeScreenState extends State<HomeScreen> {
+class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   final SQLiteService _dbService = SQLiteService();
   final ReminderScheduler _scheduler = ReminderScheduler();
   final NotificationService _notificationService = NotificationService();
@@ -30,8 +30,34 @@ class _HomeScreenState extends State<HomeScreen> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _setupNotificationCallback();
     _initializeData();
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    super.didChangeAppLifecycleState(state);
+    if (state == AppLifecycleState.resumed) {
+      // Reschedule notifications and reload data when app comes back to foreground
+      _rescheduleNotifications();
+      _loadTodayData();
+    }
+  }
+
+  Future<void> _rescheduleNotifications() async {
+    try {
+      await _scheduler.rescheduleAllNotifications();
+    } catch (e) {
+      // Silently handle errors to avoid disrupting the user experience
+      debugPrint('Failed to reschedule notifications: $e');
+    }
   }
 
   Future<void> _initializeData() async {
@@ -53,57 +79,91 @@ class _HomeScreenState extends State<HomeScreen> {
   }
 
   Future<void> _handleNotificationTap(int notificationId) async {
-    // Find the schedule for this notification ID
+    debugPrint('🔔 Notification tapped with ID: $notificationId');
+
+    // Decode notification ID: medicineId * 100 + reminderIndex
+    final medicineId = notificationId ~/ 100;
+    final reminderIndex = notificationId % 100;
+
+    debugPrint('🔍 Decoded: medicineId=$medicineId, reminderIndex=$reminderIndex');
+
+    // Find the medicine
     final db = await _dbService.database;
-    final scheduleResult = await db.query(
-      'schedules',
+    final medicineResult = await db.query(
+      'medicines',
       where: 'id = ?',
-      whereArgs: [notificationId],
+      whereArgs: [medicineId],
     );
 
-    if (scheduleResult.isNotEmpty) {
-      final schedule = scheduleResult.first;
-      final medicineId = schedule['medicineId'] as int;
-      final scheduleId = schedule['id'] as int;
+    if (medicineResult.isEmpty) {
+      debugPrint('❌ Medicine not found for ID: $medicineId');
+      return;
+    }
 
-      // Get medicine details
-      final medicineResult = await db.query(
-        'medicines',
-        where: 'id = ?',
-        whereArgs: [medicineId],
+    final medicine = medicineResult.first;
+    final reminderTimes = (medicine['reminderTimes'] as String).split(',');
+
+    if (reminderIndex >= reminderTimes.length) {
+      debugPrint('❌ Reminder index $reminderIndex out of range for medicine $medicineId');
+      return;
+    }
+
+    final reminderTime = reminderTimes[reminderIndex].trim();
+    debugPrint('✅ Found reminder time: $reminderTime for medicine: ${medicine['name']}');
+
+    // Find today's schedule for this medicine and time
+    final today = DateTime.now();
+    final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+    final scheduleResult = await db.query(
+      'schedules',
+      where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+      whereArgs: [medicineId, todayStr, reminderTime],
+    );
+
+    if (scheduleResult.isEmpty) {
+      debugPrint('❌ No schedule found for medicine $medicineId at $reminderTime today');
+      return;
+    }
+
+    final schedule = scheduleResult.first;
+    final scheduleId = schedule['id'] as int;
+    final status = schedule['status'] as String;
+
+    debugPrint('📋 Schedule status: $status for schedule ID: $scheduleId');
+
+    // Only show notification dialog if schedule is still pending
+    if (status == 'pending' && mounted) {
+      final medicineName = medicine['name'] as String;
+      final dosage = medicine['dosage'] as String;
+
+      debugPrint('💊 Showing reminder dialog for $medicineName');
+
+      // Show dialog to mark as taken or missed
+      await showDialog(
+        context: context,
+        barrierDismissible: false,
+        builder: (context) => AlertDialog(
+          title: const Text('Medicine Reminder'),
+          content: Text('Time to take your $medicineName ($dosage)'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _markAsMissed(scheduleId, medicineId);
+              },
+              child: const Text('Missed'),
+            ),
+            ElevatedButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _markAsTaken(scheduleId, medicineId);
+              },
+              child: const Text('Taken'),
+            ),
+          ],
+        ),
       );
-
-      if (medicineResult.isNotEmpty && mounted) {
-        final medicine = medicineResult.first;
-        final medicineName = medicine['name'] as String;
-        final dosage = medicine['dosage'] as String;
-
-        // Show dialog to mark as taken or missed
-        await showDialog(
-          context: context,
-          barrierDismissible: false,
-          builder: (context) => AlertDialog(
-            title: const Text('Medicine Reminder'),
-            content: Text('Did you take your $medicineName ($dosage)?'),
-            actions: [
-              TextButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _markAsMissed(scheduleId, medicineId);
-                },
-                child: const Text('Missed'),
-              ),
-              ElevatedButton(
-                onPressed: () {
-                  Navigator.of(context).pop();
-                  _markAsTaken(scheduleId, medicineId);
-                },
-                child: const Text('Taken'),
-              ),
-            ],
-          ),
-        );
-      }
     }
   }
 
@@ -513,6 +573,85 @@ class _HomeScreenState extends State<HomeScreen> {
     );
   }
 
+  Future<void> _showDeleteConfirmation(BuildContext context, int medicineId) async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Medicine'),
+        content: const Text(
+          'Are you sure you want to delete this medicine? This will also cancel all related notifications and remove it from your schedule.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.red,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      await _deleteMedicine(medicineId);
+    }
+  }
+
+  Future<void> _deleteMedicine(int medicineId) async {
+    try {
+      // Cancel all notifications for this medicine
+      await _scheduler.cancelMedicineReminders(medicineId);
+
+      // Delete the medicine from database
+      final db = await _dbService.database;
+      await db.delete(
+        'medicines',
+        where: 'id = ?',
+        whereArgs: [medicineId],
+      );
+
+      // Delete all related schedules
+      await db.delete(
+        'schedules',
+        where: 'medicineId = ?',
+        whereArgs: [medicineId],
+      );
+
+      // Delete all related history
+      await db.delete(
+        'history',
+        where: 'medicineId = ?',
+        whereArgs: [medicineId],
+      );
+
+      // Refresh the UI
+      await _loadTodayData();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Medicine deleted successfully'),
+            backgroundColor: AppColors.green,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete medicine: $e'),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
+    }
+  }
+
   Widget _buildScheduleCard(Map<String, dynamic> schedule) {
     final medicineName = schedule['name'] as String;
     final dosage = schedule['dosage'] as String;
@@ -625,66 +764,72 @@ class _HomeScreenState extends State<HomeScreen> {
       );
     }
 
-    return Container(
-      margin: const EdgeInsets.only(bottom: 12),
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        boxShadow: [
-          BoxShadow(
-            color: Colors.black.withValues(alpha: 0.06),
-            blurRadius: 8,
-            offset: const Offset(0, 2),
-          ),
-        ],
-      ),
-      child: Row(
-        children: [
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  medicineName,
-                  style: const TextStyle(
-                    fontSize: 18,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.textPrimary,
+    return GestureDetector(
+      onTap: () {
+        Navigator.pushNamed(context, AppRoutes.medicineDetail, arguments: medicineId);
+      },
+      onLongPress: () => _showDeleteConfirmation(context, medicineId),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 12),
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(16),
+          boxShadow: [
+            BoxShadow(
+              color: Colors.black.withValues(alpha: 0.06),
+              blurRadius: 8,
+              offset: const Offset(0, 2),
+            ),
+          ],
+        ),
+        child: Row(
+          children: [
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    medicineName,
+                    style: const TextStyle(
+                      fontSize: 18,
+                      fontWeight: FontWeight.bold,
+                      color: AppColors.textPrimary,
+                    ),
                   ),
+                  const SizedBox(height: 6),
+                  Text(
+                    dosage,
+                    style: TextStyle(
+                      fontSize: 14,
+                      color: AppColors.textSecondary,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Row(
+              children: [
+                Icon(
+                  Icons.access_time,
+                  size: 18,
+                  color: timeIconColor,
                 ),
-                const SizedBox(height: 6),
+                const SizedBox(width: 6),
                 Text(
-                  dosage,
+                  time,
                   style: TextStyle(
-                    fontSize: 14,
-                    color: AppColors.textSecondary,
+                    fontSize: 15,
+                    color: timeTextColor,
+                    fontWeight: FontWeight.w500,
                   ),
                 ),
               ],
             ),
-          ),
-          Row(
-            children: [
-              Icon(
-                Icons.access_time,
-                size: 18,
-                color: timeIconColor,
-              ),
-              const SizedBox(width: 6),
-              Text(
-                time,
-                style: TextStyle(
-                  fontSize: 15,
-                  color: timeTextColor,
-                  fontWeight: FontWeight.w500,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(width: 12),
-          actionWidget,
-        ],
+            const SizedBox(width: 12),
+            actionWidget,
+          ],
+        ),
       ),
     );
   }

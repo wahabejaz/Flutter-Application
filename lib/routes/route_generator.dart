@@ -19,6 +19,7 @@ import '../screens/history/history_screen.dart';
 import '../screens/profile/profile_screen.dart';
 import '../screens/profile/edit_profile_screen.dart';
 import '../screens/profile/settings_screen.dart';
+import '../models/medicine_model.dart';
 
 class RouteGenerator {
   static Route<dynamic> generateRoute(RouteSettings settings) {
@@ -75,9 +76,25 @@ class RouteGenerator {
       case AppRoutes.addMedicine:
         return MaterialPageRoute(builder: (_) => const AddMedicineScreen());
       case AppRoutes.editMedicine:
-        return MaterialPageRoute(builder: (_) => const EditMedicineScreen());
+        final medicine = settings.arguments as Medicine?;
+        if (medicine == null) {
+          return MaterialPageRoute(
+            builder: (_) => const Scaffold(
+              body: Center(child: Text('Medicine data is required')),
+            ),
+          );
+        }
+        return MaterialPageRoute(builder: (_) => EditMedicineScreen(medicine: medicine));
       case AppRoutes.medicineDetail:
-        return MaterialPageRoute(builder: (_) => const MedicineDetailScreen());
+        final medicineId = settings.arguments as int?;
+        if (medicineId == null) {
+          return MaterialPageRoute(
+            builder: (_) => const Scaffold(
+              body: Center(child: Text('Medicine ID is required')),
+            ),
+          );
+        }
+        return MaterialPageRoute(builder: (_) => MedicineDetailScreen(medicineId: medicineId));
 
       case AppRoutes.schedule:
         return MaterialPageRoute(builder: (_) => const ScheduleScreen());

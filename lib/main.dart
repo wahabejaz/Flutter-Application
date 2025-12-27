@@ -1,29 +1,57 @@
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_dotenv/flutter_dotenv.dart';
 import 'package:provider/provider.dart';
 import 'package:medicine_reminder_app/firebase_options.dart';
 import 'package:medicine_reminder_app/routes/app_routes.dart';
 import 'package:medicine_reminder_app/routes/route_generator.dart';
 import 'package:medicine_reminder_app/services/notification_service.dart';
+import 'package:medicine_reminder_app/services/reminder_scheduler.dart';
 import 'package:medicine_reminder_app/services/theme_service.dart';
 import 'package:medicine_reminder_app/config/app_theme.dart';
 
 void main() async {
   WidgetsFlutterBinding.ensureInitialized();
+
+  // Load environment variables (with error handling)
+  try {
+    await dotenv.load();
+  } catch (e) {
+    // If .env file doesn't exist or can't be loaded, continue without it
+    // AI features will be disabled gracefully
+  }
+
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
   
   // Initialize notification service
-  await NotificationService().initialize();
+  final notificationService = NotificationService();
+  await notificationService.initialize();
+
+  // Initialize reminder scheduler and reschedule all notifications
+  final reminderScheduler = ReminderScheduler(notificationService: notificationService);
+  await reminderScheduler.rescheduleAllNotifications();
+
+  // Clean up expired reminders
+  await reminderScheduler.cancelExpiredReminders();
+  await reminderScheduler.refreshUpcomingSchedules();
+
+  // Mark any overdue schedules as missed
+  await reminderScheduler.markOverdueSchedulesAsMissed();
 
   // Initialize theme service
   final themeService = ThemeService();
   await themeService.initialize();
 
   runApp(
-    ChangeNotifierProvider(
-      create: (_) => themeService,
+    MultiProvider(
+      providers: [
+        Provider<NotificationService>.value(value: notificationService),
+        ChangeNotifierProvider<ThemeService>(
+          create: (_) => themeService,
+        ),
+      ],
       child: const MyApp(),
     ),
   );

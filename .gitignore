@@ -85,3 +85,8 @@ android/app/google-services.json
 # Optional archives
 # =========================
 *.zip
+
+# =========================
+# Environment variables
+# =========================
+.env

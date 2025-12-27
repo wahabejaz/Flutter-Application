@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import 'package:provider/provider.dart';
 import '../../config/app_colors.dart';
 import '../../models/medicine_model.dart';
 import '../../services/db/medicine_dao.dart';
 import '../../services/reminder_scheduler.dart';
+import '../../services/notification_service.dart';
 
 /// Add Medicine Screen
 /// Allows users to add a new medicine with all details
@@ -21,11 +23,13 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   final _dosageController = TextEditingController();
   final _stockController = TextEditingController();
   final _notesController = TextEditingController();
+  final _nameFocus = FocusNode();
+  final _dosageFocus = FocusNode();
+  final _stockFocus = FocusNode();
+  final _notesFocus = FocusNode();
   final MedicineDAO _medicineDAO = MedicineDAO();
-  final ReminderScheduler _scheduler = ReminderScheduler();
 
   String _frequency = 'Daily';
-  final String _frequencyUnit = '1';
   DateTime _startDate = DateTime.now();
   DateTime _endDate = DateTime.now().add(const Duration(days: 30));
   TimeOfDay _selectedTime = TimeOfDay.now();
@@ -47,12 +51,36 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
     _selectedIconColor = _iconColors[0];
   }
 
+  ReminderScheduler get _scheduler {
+    final notificationService = Provider.of<NotificationService>(context, listen: false);
+    return ReminderScheduler(notificationService: notificationService);
+  }
+
+  /// Helper method to compare only date parts (year, month, day) of DateTime objects
+  bool _isSameDate(DateTime date1, DateTime date2) {
+    return date1.year == date2.year && date1.month == date2.month && date1.day == date2.day;
+  }
+
+  /// Check if a reminder time is in the future for today
+  bool _isReminderTimeValidForToday(String timeStr) {
+    final now = DateTime.now();
+    final timeParts = timeStr.split(':');
+    final hour = int.parse(timeParts[0]);
+    final minute = int.parse(timeParts[1]);
+    final reminderDateTime = DateTime(now.year, now.month, now.day, hour, minute);
+    return reminderDateTime.isAfter(now);
+  }
+
   @override
   void dispose() {
     _nameController.dispose();
     _dosageController.dispose();
     _stockController.dispose();
     _notesController.dispose();
+    _nameFocus.dispose();
+    _dosageFocus.dispose();
+    _stockFocus.dispose();
+    _notesFocus.dispose();
     super.dispose();
   }
 
@@ -79,15 +107,32 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       context: context,
       initialTime: _selectedTime,
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
+      final timeStr = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
+
+      // Check for duplicate times
+      if (_reminderTimes.contains(timeStr)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('This reminder time is already added')),
+        );
+        return;
+      }
+
+      // Check if time is valid for today
+      if (_isSameDate(_startDate, DateTime.now()) && !_isReminderTimeValidForToday(timeStr)) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Selected time has already passed. Please choose a future time.')),
+        );
+        return;
+      }
+
       setState(() {
         _selectedTime = picked;
-        final timeStr = '${picked.hour.toString().padLeft(2, '0')}:${picked.minute.toString().padLeft(2, '0')}';
-        if (!_reminderTimes.contains(timeStr)) {
-          _reminderTimes.add(timeStr);
-          _reminderTimes.sort();
-        }
+        _reminderTimes.add(timeStr);
+        _reminderTimes.sort();
       });
+      // Unfocus all fields after time selection
+      FocusManager.instance.primaryFocus?.unfocus();
     }
   }
 
@@ -99,26 +144,69 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
   Future<void> _saveMedicine() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_reminderTimes.isEmpty) {
+
+    // Validate end date is not before start date
+    if (_endDate.isBefore(_startDate)) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Please add at least one reminder time')),
+        const SnackBar(content: Text('End date cannot be before start date')),
       );
       return;
+    }
+
+    // For "As Needed" frequency, skip reminder time validation
+    if (_frequency != 'As Needed') {
+      if (_reminderTimes.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Please add at least one reminder time')),
+        );
+        return;
+      }
+
+      // Validate date and time for same-day medicines
+      final now = DateTime.now();
+      if (_isSameDate(_startDate, now) && _isSameDate(_endDate, now)) {
+        // For same-day medicines, check if any reminder time has already passed
+        for (final timeStr in _reminderTimes) {
+          if (!_isReminderTimeValidForToday(timeStr)) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Selected time has already passed. Please choose a future time.')),
+            );
+            return;
+          }
+        }
+      }
     }
 
     setState(() => _isLoading = true);
 
     try {
       final now = DateTime.now();
+
+      // Map frequency to frequencyUnit
+      String frequencyUnit;
+      switch (_frequency) {
+        case 'Daily':
+          frequencyUnit = '1';
+          break;
+        case 'Weekly':
+          frequencyUnit = '7';
+          break;
+        case 'As Needed':
+          frequencyUnit = '0';
+          break;
+        default:
+          frequencyUnit = '1';
+      }
+
       final medicine = Medicine(
         uid: FirebaseAuth.instance.currentUser?.uid,
         name: _nameController.text.trim(),
         dosage: _dosageController.text.trim(),
         frequency: _frequency,
-        frequencyUnit: _frequencyUnit,
+        frequencyUnit: frequencyUnit,
         startDate: _startDate,
         endDate: _endDate,
-        reminderTimes: _reminderTimes,
+        reminderTimes: _frequency == 'As Needed' ? [] : _reminderTimes,
         notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         iconColor: _selectedIconColor,
         stockCount: int.parse(_stockController.text.trim()),
@@ -129,8 +217,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       final id = await _medicineDAO.insertMedicine(medicine);
       final medicineWithId = medicine.copyWith(id: id);
 
-      // Schedule reminders
-      await _scheduler.scheduleMedicineReminders(medicineWithId);
+      // Schedule reminders only if not "As Needed"
+      if (_frequency != 'As Needed') {
+        await _scheduler.scheduleMedicineReminders(medicineWithId);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -181,6 +271,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               const SizedBox(height: 8),
               TextFormField(
                 controller: _nameController,
+                focusNode: _nameFocus,
                 decoration: InputDecoration(
                   hintText: 'Enter medication name',
                   border: OutlineInputBorder(
@@ -202,6 +293,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               const SizedBox(height: 8),
               TextFormField(
                 controller: _dosageController,
+                focusNode: _dosageFocus,
                 decoration: InputDecoration(
                   hintText: 'e.g., 500mg, 1 tablet',
                   border: OutlineInputBorder(
@@ -223,9 +315,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               const SizedBox(height: 8),
               TextFormField(
                 controller: _stockController,
+                focusNode: _stockFocus,
                 keyboardType: TextInputType.number,
                 decoration: InputDecoration(
-                  hintText: 'e.g., 30 tablets',
+                  hintText: 'e.g., 30',
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
                   ),
@@ -328,49 +421,52 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                 ],
               ),
               const SizedBox(height: 24),
-              // Reminder Times
-              _buildSectionTitle('Reminder Times'),
-              const SizedBox(height: 8),
-              InkWell(
-                onTap: () => _selectTime(context),
-                child: Container(
-                  padding: const EdgeInsets.all(16),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.access_time, size: 20),
-                      const SizedBox(width: 8),
-                      const Text('Add Reminder Time'),
-                      const Spacer(),
-                      Icon(Icons.add, color: AppColors.primary),
-                    ],
+              // Reminder Times - Only show for non "As Needed" frequencies
+              if (_frequency != 'As Needed') ...[
+                _buildSectionTitle('Reminder Times'),
+                const SizedBox(height: 8),
+                InkWell(
+                  onTap: () => _selectTime(context),
+                  child: Container(
+                    padding: const EdgeInsets.all(16),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(12),
+                      border: Border.all(color: Colors.grey.shade300),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(Icons.access_time, size: 20),
+                        const SizedBox(width: 8),
+                        const Text('Add Reminder Time'),
+                        const Spacer(),
+                        Icon(Icons.add, color: AppColors.primary),
+                      ],
+                    ),
                   ),
                 ),
-              ),
-              if (_reminderTimes.isNotEmpty) ...[
-                const SizedBox(height: 12),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  children: _reminderTimes.map((time) {
-                    return Chip(
-                      label: Text(time),
-                      onDeleted: () => _removeTime(time),
-                      deleteIcon: const Icon(Icons.close, size: 18),
-                    );
-                  }).toList(),
-                ),
+                if (_reminderTimes.isNotEmpty) ...[
+                  const SizedBox(height: 12),
+                  Wrap(
+                    spacing: 8,
+                    runSpacing: 8,
+                    children: _reminderTimes.map((time) {
+                      return Chip(
+                        label: Text(time),
+                        onDeleted: () => _removeTime(time),
+                        deleteIcon: const Icon(Icons.close, size: 18),
+                      );
+                    }).toList(),
+                  ),
+                ],
+                const SizedBox(height: 24),
               ],
-              const SizedBox(height: 24),
               // Notes
               _buildSectionTitle('Notes'),
               const SizedBox(height: 8),
               TextFormField(
                 controller: _notesController,
+                focusNode: _notesFocus,
                 maxLines: 4,
                 decoration: InputDecoration(
                   hintText: 'Add any additional notes...',

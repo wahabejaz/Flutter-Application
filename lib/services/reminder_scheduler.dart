@@ -3,16 +3,23 @@ import 'package:medicine_reminder_app/models/schedule_model.dart';
 import 'package:medicine_reminder_app/models/histroy_model.dart';
 import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
 import 'package:medicine_reminder_app/services/notification_service.dart';
+import 'package:flutter/material.dart';
 
 /// Reminder Scheduler Service
 /// Handles scheduling reminders for medicines and creating schedule entries
 class ReminderScheduler {
-  final NotificationService _notificationService = NotificationService();
+  final NotificationService _notificationService;
   final SQLiteService _dbService = SQLiteService();
 
+  ReminderScheduler({NotificationService? notificationService})
+      : _notificationService = notificationService ?? NotificationService();
+
   /// Schedule reminders for a medicine
-  /// Creates schedule entries and sets up notifications
+  /// Creates daily repeating notifications and schedule entries for upcoming days
   Future<void> scheduleMedicineReminders(Medicine medicine) async {
+    // Cancel any existing notifications for this medicine first
+    await cancelMedicineReminders(medicine.id!);
+
     final now = DateTime.now();
     final startDate = medicine.startDate;
     final endDate = medicine.endDate;
@@ -26,19 +33,45 @@ class ReminderScheduler {
     final today = DateTime(now.year, now.month, now.day);
     final effectiveStartDate = startDate.isBefore(today) ? today : startDate;
 
-    // Create schedule entries for each reminder time
+    // Schedule daily repeating notifications for each reminder time
+    for (int i = 0; i < medicine.reminderTimes.length; i++) {
+      final timeStr = medicine.reminderTimes[i];
+      final timeParts = timeStr.split(':');
+      final hour = int.parse(timeParts[0]);
+      final minute = int.parse(timeParts[1]);
+      final timeOfDay = TimeOfDay(hour: hour, minute: minute);
+
+      // Generate unique notification ID for this medicine and time
+      final notificationId = medicine.id! * 100 + i;
+
+      try {
+        await _notificationService.scheduleDailyMedicineReminder(
+          id: notificationId,
+          title: 'Medicine Reminder 💊',
+          body: 'It\'s time to take ${medicine.name}',
+          time: timeOfDay,
+        );
+      } catch (e) {
+        // Log the error but continue with other reminders
+        // This prevents one failed reminder from blocking others
+        debugPrint('Failed to schedule reminder for ${medicine.name} at ${timeStr}: $e');
+      }
+    }
+
+    // Create schedule entries for the next 7 days (to allow marking as taken/missed)
+    final db = await _dbService.database;
     for (var timeStr in medicine.reminderTimes) {
       final timeParts = timeStr.split(':');
       final hour = int.parse(timeParts[0]);
       final minute = int.parse(timeParts[1]);
 
-      final db = await _dbService.database;
-      
-      // Schedule for each day from effective start date to end date
       var currentDate = effectiveStartDate;
-      
-      while (currentDate.isBefore(endDate) || currentDate.isAtSameMomentAs(endDate)) {
-        // Create schedule for this date and time
+      final endScheduleDate = endDate.isBefore(today.add(const Duration(days: 7)))
+          ? endDate
+          : today.add(const Duration(days: 7));
+
+      while (currentDate.isBefore(endScheduleDate) ||
+             currentDate.isAtSameMomentAs(endScheduleDate)) {
         final scheduleDateTime = DateTime(
           currentDate.year,
           currentDate.month,
@@ -46,17 +79,13 @@ class ReminderScheduler {
           hour,
           minute,
         );
-        
+
         // Check if schedule already exists
         final dateStr = currentDate.toIso8601String().split('T')[0];
         final existing = await db.query(
           'schedules',
           where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
-          whereArgs: [
-            medicine.id!,
-            dateStr,
-            timeStr,
-          ],
+          whereArgs: [medicine.id!, dateStr, timeStr],
         );
 
         if (existing.isEmpty) {
@@ -65,26 +94,12 @@ class ReminderScheduler {
             medicineId: medicine.id!,
             scheduledDate: scheduleDateTime,
             scheduledTime: timeStr,
-            status: 'pending',
+            status: scheduleDateTime.isBefore(now) ? 'missed' : 'pending',
             createdAt: DateTime.now(),
           );
 
           // Insert schedule into database
-          final scheduleId = await db.insert('schedules', schedule.toMap());
-
-          // Schedule notification (only for future dates/times)
-          if (scheduleDateTime.isAfter(now)) {
-            try {
-              await _notificationService.scheduleNotification(
-                id: scheduleId,
-                title: 'Medicine Reminder',
-                body: 'Time to take ${medicine.name} (${medicine.dosage})',
-                scheduledDate: scheduleDateTime,
-              );
-            } catch (e) {
-              // Notification scheduling might fail on web, continue anyway
-            }
-          }
+          await db.insert('schedules', schedule.toMap());
         }
 
         // Move to next day
@@ -95,20 +110,117 @@ class ReminderScheduler {
 
   /// Cancel all reminders for a medicine
   Future<void> cancelMedicineReminders(int medicineId) async {
+    // Cancel daily repeating notifications
+    // Assuming up to 10 reminder times per medicine
+    for (int i = 0; i < 10; i++) {
+      final notificationId = medicineId * 100 + i;
+      try {
+        await _notificationService.cancelNotification(notificationId);
+      } catch (e) {
+        // Continue canceling others
+      }
+    }
+
+    // Delete schedule entries
     final db = await _dbService.database;
-    
-    // Get all schedules for this medicine
-    final schedules = await db.query(
-      'schedules',
-      where: 'medicineId = ? AND status = ?',
-      whereArgs: [medicineId, 'pending'],
+    await db.delete('schedules', where: 'medicineId = ?', whereArgs: [medicineId]);
+  }
+
+  /// Check and cancel reminders for expired medicines
+  Future<void> cancelExpiredReminders() async {
+    final db = await _dbService.database;
+    final now = DateTime.now();
+
+    // Get all medicines that have ended
+    final expiredMedicines = await db.query(
+      'medicines',
+      where: 'endDate < ?',
+      whereArgs: [now.toIso8601String()],
     );
 
-    // Cancel notifications and delete schedules
-    for (var scheduleMap in schedules) {
-      final scheduleId = scheduleMap['id'] as int;
-      await _notificationService.cancelNotification(scheduleId);
-      await db.delete('schedules', where: 'id = ?', whereArgs: [scheduleId]);
+    for (var medicineMap in expiredMedicines) {
+      final medicineId = medicineMap['id'] as int;
+      await cancelMedicineReminders(medicineId);
+    }
+  }
+
+  /// Refresh schedule entries for upcoming days
+  Future<void> refreshUpcomingSchedules() async {
+    final db = await _dbService.database;
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final futureDate = today.add(const Duration(days: 7));
+
+    // Get all active medicines
+    final activeMedicines = await db.query(
+      'medicines',
+      where: 'endDate >= ?',
+      whereArgs: [now.toIso8601String()],
+    );
+
+    for (var medicineMap in activeMedicines) {
+      final medicine = Medicine.fromMap(medicineMap);
+
+      for (var timeStr in medicine.reminderTimes) {
+        final timeParts = timeStr.split(':');
+        final hour = int.parse(timeParts[0]);
+        final minute = int.parse(timeParts[1]);
+
+        var currentDate = today;
+        while (currentDate.isBefore(futureDate)) {
+          final scheduleDateTime = DateTime(
+            currentDate.year,
+            currentDate.month,
+            currentDate.day,
+            hour,
+            minute,
+          );
+
+          // Check if schedule already exists
+          final dateStr = currentDate.toIso8601String().split('T')[0];
+          final existing = await db.query(
+            'schedules',
+            where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+            whereArgs: [medicine.id!, dateStr, timeStr],
+          );
+
+          if (existing.isEmpty) {
+            // Create schedule entry
+            final schedule = Schedule(
+              medicineId: medicine.id!,
+              scheduledDate: scheduleDateTime,
+              scheduledTime: timeStr,
+              status: scheduleDateTime.isBefore(now) ? 'missed' : 'pending',
+              createdAt: DateTime.now(),
+            );
+
+            // Insert schedule into database
+            await db.insert('schedules', schedule.toMap());
+          }
+
+          // Move to next day
+          currentDate = currentDate.add(const Duration(days: 1));
+        }
+      }
+    }
+  }
+
+  /// Reschedule all notifications for active medicines
+  /// This should be called when the app starts to ensure notifications are active
+  Future<void> rescheduleAllNotifications() async {
+    final db = await _dbService.database;
+    final now = DateTime.now();
+
+    // Get all active medicines (not expired)
+    final activeMedicines = await db.query(
+      'medicines',
+      where: 'endDate >= ?',
+      whereArgs: [now.toIso8601String()],
+    );
+
+    for (var medicineMap in activeMedicines) {
+      final medicine = Medicine.fromMap(medicineMap);
+      await scheduleMedicineReminders(medicine);
     }
   }
 
@@ -219,6 +331,51 @@ class ReminderScheduler {
       );
 
       await db.insert('history', history.toMap());
+    }
+  }
+
+  /// Mark all overdue pending schedules as missed
+  /// This should be called when the app starts to ensure missed doses are properly recorded
+  Future<void> markOverdueSchedulesAsMissed() async {
+    final db = await _dbService.database;
+    final now = DateTime.now();
+    const gracePeriod = Duration(minutes: 30);
+
+    // Get all pending schedules that are overdue (past grace period)
+    // Use Dart DateTime logic instead of SQLite datetime functions for timezone safety
+    final pendingSchedules = await db.rawQuery('''
+      SELECT s.*, m.uid
+      FROM schedules s
+      INNER JOIN medicines m ON s.medicineId = m.id
+      WHERE s.status = 'pending'
+    ''');
+
+    for (final scheduleMap in pendingSchedules) {
+      final scheduledDateStr = scheduleMap['scheduledDate'] as String;
+      final scheduledTimeStr = scheduleMap['scheduledTime'] as String;
+      
+      // Parse the stored ISO date string
+      final scheduledDate = DateTime.parse(scheduledDateStr);
+      
+      // Construct the full scheduled DateTime using the stored date and time
+      final timeParts = scheduledTimeStr.split(':');
+      final scheduledHour = int.parse(timeParts[0]);
+      final scheduledMinute = int.parse(timeParts[1]);
+      
+      final scheduledDateTime = DateTime(
+        scheduledDate.year,
+        scheduledDate.month,
+        scheduledDate.day,
+        scheduledHour,
+        scheduledMinute,
+      );
+
+      // Mark as missed only if now is after scheduled time + grace period
+      if (now.isAfter(scheduledDateTime.add(gracePeriod))) {
+        final scheduleId = scheduleMap['id'] as int;
+        final medicineId = scheduleMap['medicineId'] as int;
+        await markAsMissed(scheduleId, medicineId);
+      }
     }
   }
 }
