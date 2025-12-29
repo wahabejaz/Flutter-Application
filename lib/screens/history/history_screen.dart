@@ -3,6 +3,7 @@ import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../config/app_colors.dart';
 import '../../services/db/sqlite_service.dart';
+import '../../utils/date_time_helpers.dart';
 
 /// History Screen
 /// Shows medicine intake history with filters (Taken, Missed, All)
@@ -270,7 +271,7 @@ class _HistoryScreenState extends State<HistoryScreen> with WidgetsBindingObserv
               ),
               const SizedBox(width: 4),
               Text(
-                time,
+                DateTimeHelpers.formatTime12Hour(time),
                 style: TextStyle(
                   fontSize: 14,
                   color: isTaken ? AppColors.green : AppColors.orange,

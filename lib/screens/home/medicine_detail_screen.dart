@@ -1,8 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:intl/intl.dart';
+import 'package:provider/provider.dart';
 import '../../models/medicine_model.dart';
 import '../../services/db/medicine_dao.dart';
 import '../../services/ai_service.dart';
+import '../../services/reminder_scheduler.dart';
+import '../../services/notification_service.dart';
 import '../../config/app_colors.dart';
 
 class MedicineDetailScreen extends StatefulWidget {
@@ -19,6 +22,11 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
   AIService? _aiService;
   Medicine? _medicine;
   bool _isLoading = true;
+
+  ReminderScheduler get _scheduler {
+    final notificationService = Provider.of<NotificationService>(context, listen: false);
+    return ReminderScheduler(notificationService: notificationService);
+  }
 
   @override
   void initState() {
@@ -43,6 +51,70 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('Failed to load medicine details')),
         );
+      }
+    }
+  }
+
+  Future<void> _showDeleteConfirmation() async {
+    final result = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('Delete Medicine'),
+        content: const Text(
+          'Are you sure you want to delete this medicine? This will also cancel all related notifications and remove it from your schedule and history.',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('Cancel'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            style: TextButton.styleFrom(
+              foregroundColor: AppColors.red,
+            ),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (result == true) {
+      await _deleteMedicine();
+    }
+  }
+
+  Future<void> _deleteMedicine() async {
+    setState(() => _isLoading = true);
+
+    try {
+      // Cancel all notifications for this medicine
+      await _scheduler.cancelMedicineReminders(_medicine!.id!);
+
+      // Delete the medicine from database
+      await _medicineDAO.deleteMedicine(_medicine!.id!);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('Medicine deleted successfully'),
+            backgroundColor: AppColors.green,
+          ),
+        );
+        Navigator.of(context).pop('deleted'); // Return 'deleted' to indicate deletion
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Failed to delete medicine: $e'),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
+    } finally {
+      if (mounted) {
+        setState(() => _isLoading = false);
       }
     }
   }
@@ -272,6 +344,11 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
           fontWeight: FontWeight.bold,
         ),
         actions: [
+          IconButton(
+            icon: const Icon(Icons.delete_outline, color: AppColors.red),
+            onPressed: _isLoading ? null : _showDeleteConfirmation,
+            tooltip: 'Delete Medicine',
+          ),
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: () async {

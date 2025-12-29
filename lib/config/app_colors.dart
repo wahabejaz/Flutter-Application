@@ -15,6 +15,7 @@ class AppColors {
   static const Color blueLight = Color(0xFF64B5F6);
   static const Color red = Color(0xFFEF5350);
   static const Color redLight = Color(0xFFE57373);
+  static const Color grey = Color(0xFF757575);
   
   // Pastel colors for Quick Actions - More vibrant
   static const Color pastelGreen = Color(0xFFC5E1A5);
@@ -56,7 +57,7 @@ class AppColors {
 
   // Daily Progress Gradient (light green to light blue)
   static const LinearGradient dailyProgressGradient = LinearGradient(
-    colors: [Color(0xFFA5D6A7), Color(0xFF90CAF9)],
+    colors: [Color.fromARGB(255, 159, 216, 160), Color.fromARGB(255, 132, 197, 250)],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );

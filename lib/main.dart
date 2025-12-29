@@ -24,21 +24,25 @@ void main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  
+
   // Initialize notification service
   final notificationService = NotificationService();
   await notificationService.initialize();
 
   // Initialize reminder scheduler and reschedule all notifications
   final reminderScheduler = ReminderScheduler(notificationService: notificationService);
-  await reminderScheduler.rescheduleAllNotifications();
 
-  // Clean up expired reminders
-  await reminderScheduler.cancelExpiredReminders();
-  await reminderScheduler.refreshUpcomingSchedules();
-
-  // Mark any overdue schedules as missed
-  await reminderScheduler.markOverdueSchedulesAsMissed();
+  // Run initialization in background to prevent blocking app startup
+  Future.microtask(() async {
+    try {
+      await reminderScheduler.rescheduleAllNotifications();
+      await reminderScheduler.cancelExpiredReminders();
+      await reminderScheduler.refreshUpcomingSchedules();
+      await reminderScheduler.markOverdueSchedulesAsMissed();
+    } catch (e) {
+      debugPrint('⚠️ Error during background initialization: $e');
+    }
+  });
 
   // Initialize theme service
   final themeService = ThemeService();

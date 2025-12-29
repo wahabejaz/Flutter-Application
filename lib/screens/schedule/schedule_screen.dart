@@ -4,6 +4,7 @@ import 'package:firebase_auth/firebase_auth.dart';
 import '../../config/app_colors.dart';
 import '../../services/db/sqlite_service.dart';
 import '../../services/reminder_scheduler.dart';
+import '../../utils/date_time_helpers.dart';
 
 /// Schedule Screen
 /// Shows calendar view and scheduled medicines for selected date
@@ -363,7 +364,7 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               ),
               const SizedBox(width: 4),
               Text(
-                time,
+                DateTimeHelpers.formatTime12Hour(time),
                 style: TextStyle(
                   fontSize: 14,
                   color: isTaken ? AppColors.green : AppColors.orange,

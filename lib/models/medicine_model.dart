@@ -64,7 +64,7 @@ class Medicine {
       frequencyUnit: map['frequencyUnit'] as String,
       startDate: DateTime.parse(map['startDate'] as String),
       endDate: DateTime.parse(map['endDate'] as String),
-      reminderTimes: (map['reminderTimes'] as String).split(','),
+      reminderTimes: (map['reminderTimes'] as String?)?.split(',').where((time) => time.trim().isNotEmpty).toList() ?? [],
       notes: map['notes'] as String?,
       iconColor: map['iconColor'] as int,
       stockCount: map['stockCount'] as int? ?? 0,

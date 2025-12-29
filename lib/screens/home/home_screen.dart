@@ -8,6 +8,8 @@ import '../../widgets/progress_circle.dart';
 import 'refill_tracker/refill_tracker_screen.dart';
 import 'package:intl/intl.dart';
 import 'package:firebase_auth/firebase_auth.dart';
+import '../../utils/date_time_helpers.dart';
+import 'dart:async';
 
 /// Home Screen
 /// Main screen showing daily progress, quick actions, and today's schedule
@@ -19,6 +21,10 @@ class HomeScreen extends StatefulWidget {
 }
 
 class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
+  // Constants for schedule statuses
+  static const String _statusPending = 'pending';
+  static const String _statusTaken = 'taken';
+  static const String _statusMissed = 'missed';
   final SQLiteService _dbService = SQLiteService();
   final ReminderScheduler _scheduler = ReminderScheduler();
   final NotificationService _notificationService = NotificationService();
@@ -26,6 +32,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   List<Map<String, dynamic>> _todaySchedules = [];
   int _totalDoses = 0;
   int _takenDoses = 0;
+  Timer? _autoUpdateTimer;
 
   @override
   void initState() {
@@ -33,11 +40,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     WidgetsBinding.instance.addObserver(this);
     _setupNotificationCallback();
     _initializeData();
+    
+    // Set up automatic UI updates every 60 seconds
+    _autoUpdateTimer = Timer.periodic(const Duration(seconds: 60), (timer) {
+      if (mounted) {
+        _loadTodayData();
+      }
+    });
   }
 
   @override
   void dispose() {
     WidgetsBinding.instance.removeObserver(this);
+    _autoUpdateTimer?.cancel();
     super.dispose();
   }
 
@@ -81,89 +96,110 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   Future<void> _handleNotificationTap(int notificationId) async {
     debugPrint('🔔 Notification tapped with ID: $notificationId');
 
-    // Decode notification ID: medicineId * 100 + reminderIndex
-    final medicineId = notificationId ~/ 100;
-    final reminderIndex = notificationId % 100;
+    try {
+      // Decode notification ID: medicineId * 100 + reminderIndex
+      final medicineId = notificationId ~/ 100;
+      final reminderIndex = notificationId % 100;
 
-    debugPrint('🔍 Decoded: medicineId=$medicineId, reminderIndex=$reminderIndex');
+      debugPrint('🔍 Decoded: medicineId=$medicineId, reminderIndex=$reminderIndex');
 
-    // Find the medicine
-    final db = await _dbService.database;
-    final medicineResult = await db.query(
-      'medicines',
-      where: 'id = ?',
-      whereArgs: [medicineId],
-    );
-
-    if (medicineResult.isEmpty) {
-      debugPrint('❌ Medicine not found for ID: $medicineId');
-      return;
-    }
-
-    final medicine = medicineResult.first;
-    final reminderTimes = (medicine['reminderTimes'] as String).split(',');
-
-    if (reminderIndex >= reminderTimes.length) {
-      debugPrint('❌ Reminder index $reminderIndex out of range for medicine $medicineId');
-      return;
-    }
-
-    final reminderTime = reminderTimes[reminderIndex].trim();
-    debugPrint('✅ Found reminder time: $reminderTime for medicine: ${medicine['name']}');
-
-    // Find today's schedule for this medicine and time
-    final today = DateTime.now();
-    final todayStr = DateFormat('yyyy-MM-dd').format(today);
-
-    final scheduleResult = await db.query(
-      'schedules',
-      where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
-      whereArgs: [medicineId, todayStr, reminderTime],
-    );
-
-    if (scheduleResult.isEmpty) {
-      debugPrint('❌ No schedule found for medicine $medicineId at $reminderTime today');
-      return;
-    }
-
-    final schedule = scheduleResult.first;
-    final scheduleId = schedule['id'] as int;
-    final status = schedule['status'] as String;
-
-    debugPrint('📋 Schedule status: $status for schedule ID: $scheduleId');
-
-    // Only show notification dialog if schedule is still pending
-    if (status == 'pending' && mounted) {
-      final medicineName = medicine['name'] as String;
-      final dosage = medicine['dosage'] as String;
-
-      debugPrint('💊 Showing reminder dialog for $medicineName');
-
-      // Show dialog to mark as taken or missed
-      await showDialog(
-        context: context,
-        barrierDismissible: false,
-        builder: (context) => AlertDialog(
-          title: const Text('Medicine Reminder'),
-          content: Text('Time to take your $medicineName ($dosage)'),
-          actions: [
-            TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _markAsMissed(scheduleId, medicineId);
-              },
-              child: const Text('Missed'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-                _markAsTaken(scheduleId, medicineId);
-              },
-              child: const Text('Taken'),
-            ),
-          ],
-        ),
+      // Find the medicine
+      final db = await _dbService.database;
+      final medicineResult = await db.query(
+        'medicines',
+        where: 'id = ?',
+        whereArgs: [medicineId],
       );
+
+      if (medicineResult.isEmpty) {
+        debugPrint('❌ Medicine not found for ID: $medicineId');
+        return;
+      }
+
+      final medicine = medicineResult.first;
+      final reminderTimes = (medicine['reminderTimes'] as String?)?.split(',') ?? [];
+
+      if (reminderIndex >= reminderTimes.length) {
+        debugPrint('❌ Reminder index $reminderIndex out of range for medicine $medicineId');
+        return;
+      }
+
+      final reminderTime = reminderTimes[reminderIndex].trim();
+      debugPrint('✅ Found reminder time: $reminderTime for medicine: ${medicine['name']}');
+
+      // Find today's schedule for this medicine and time
+      final today = DateTime.now();
+      final todayStr = DateFormat('yyyy-MM-dd').format(today);
+
+      final scheduleResult = await db.query(
+        'schedules',
+        where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+        whereArgs: [medicineId, todayStr, reminderTime],
+      );
+
+      if (scheduleResult.isEmpty) {
+        debugPrint('❌ No schedule found for medicine $medicineId at $reminderTime today');
+        return;
+      }
+
+      final schedule = scheduleResult.first;
+      final scheduleId = schedule['id'] as int?;
+      final status = schedule['status'] as String?;
+
+      if (scheduleId == null || status == null) {
+        debugPrint('❌ Invalid schedule data');
+        return;
+      }
+
+      debugPrint('📋 Schedule status: $status for schedule ID: $scheduleId');
+
+      // Only show notification dialog if schedule is still pending
+      if (status == _statusPending && mounted) {
+        final medicineName = medicine['name'] as String? ?? 'Unknown Medicine';
+        final dosage = medicine['dosage'] as String? ?? '';
+
+        debugPrint('💊 Showing reminder dialog for $medicineName');
+
+        // Show dialog to mark as taken or missed
+        await showDialog(
+          context: context,
+          barrierDismissible: false,
+          builder: (context) => AlertDialog(
+            title: const Text('Medicine Reminder'),
+            content: Text('Time to take your $medicineName ($dosage)'),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  debugPrint('🚫 User tapped "Missed" for schedule $scheduleId');
+                  Navigator.of(context).pop();
+                  _markAsMissed(scheduleId, medicineId);
+                },
+                child: const Text('Missed'),
+              ),
+              ElevatedButton(
+                onPressed: () {
+                  debugPrint('✅ User tapped "Taken" for schedule $scheduleId');
+                  Navigator.of(context).pop();
+                  _markAsTaken(scheduleId, medicineId);
+                },
+                child: const Text('Taken'),
+              ),
+            ],
+          ),
+        );
+      } else {
+        debugPrint('⚠️ Notification tapped but schedule status is "$status" (not pending), dialog not shown');
+      }
+    } catch (e) {
+      debugPrint('❌ Error handling notification tap: $e');
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('Error processing notification: $e'),
+            backgroundColor: AppColors.red,
+          ),
+        );
+      }
     }
   }
 
@@ -179,7 +215,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _loadTodayData() async {
     await _loadTodaySchedules();
-    setState(() {});
+    // No need for additional setState since _loadTodaySchedules already calls it
   }
 
   Future<void> _loadTodaySchedules() async {
@@ -190,6 +226,14 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final today = DateTime.now();
     final todayStr = DateFormat('yyyy-MM-dd').format(today);
 
+    // Check for overdue schedules and mark them as missed
+    try {
+      await _scheduler.markOverdueSchedulesAsMissed();
+      debugPrint('✅ Checked for overdue schedules');
+    } catch (e) {
+      debugPrint('⚠️ Failed to check overdue schedules: $e');
+    }
+
     // Get all schedules for today with medicine details, filtered by current user's uid
     final schedules = await db.rawQuery('''
       SELECT s.*, m.name, m.dosage, m.iconColor
@@ -199,48 +243,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       ORDER BY s.scheduledTime ASC
     ''', [todayStr, currentUser.uid]);
 
-    // Check for missed doses and mark them automatically (after grace period)
-    final now = DateTime.now();
-    const gracePeriod = Duration(minutes: 30);
-    
-    for (final schedule in schedules) {
-      final status = schedule['status'] as String;
-      if (status == 'pending') {
-        final scheduledTimeStr = schedule['scheduledTime'] as String;
-        final scheduledTimeParts = scheduledTimeStr.split(':');
-        final scheduledHour = int.parse(scheduledTimeParts[0]);
-        final scheduledMinute = int.parse(scheduledTimeParts[1]);
-
-        final scheduledDateTime = DateTime(
-          today.year,
-          today.month,
-          today.day,
-          scheduledHour,
-          scheduledMinute,
-        );
-
-        // Mark as missed only after grace period expires
-        if (now.isAfter(scheduledDateTime.add(gracePeriod))) {
-          final scheduleId = schedule['id'] as int;
-          final medicineId = schedule['medicineId'] as int;
-          await _scheduler.markAsMissed(scheduleId, medicineId);
-        }
-      }
-    }
-
-    // Reload schedules after marking missed ones
-    final updatedSchedules = await db.rawQuery('''
-      SELECT s.*, m.name, m.dosage, m.iconColor
-      FROM schedules s
-      INNER JOIN medicines m ON s.medicineId = m.id
-      WHERE date(s.scheduledDate) = ? AND m.uid = ?
-      ORDER BY s.scheduledTime ASC
-    ''', [todayStr, currentUser.uid]);
+    // Note: Overdue checking is handled by markOverdueSchedulesAsMissed() in main.dart on app start
+    // No need to check for overdue schedules here to avoid duplicate processing
 
     setState(() {
-      _todaySchedules = updatedSchedules;
-      _totalDoses = updatedSchedules.length;
-      _takenDoses = updatedSchedules.where((s) => s['status'] == 'taken').length;
+      _todaySchedules = schedules;
+      _totalDoses = schedules.length;
+      _takenDoses = schedules.where((s) => s['status'] == _statusTaken).length;
     });
   }
 
@@ -255,7 +264,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
     if (scheduleResult.isNotEmpty) {
       final status = scheduleResult.first['status'] as String;
-      if (status == 'pending') {
+      if (status == _statusPending) {
         await _scheduler.markAsTaken(scheduleId, medicineId);
         await _loadTodayData();
         if (mounted) {
@@ -266,7 +275,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
             ),
           );
         }
-      } else if (status == 'missed') {
+      } else if (status == _statusMissed) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(
@@ -280,8 +289,10 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
   }
 
   Future<void> _markAsMissed(int scheduleId, int medicineId) async {
+    debugPrint('🚫 Marking schedule $scheduleId as missed for medicine $medicineId');
     await _scheduler.markAsMissed(scheduleId, medicineId);
     await _loadTodayData();
+    debugPrint('✅ Successfully marked schedule as missed and refreshed UI');
     if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Medicine marked as missed')),
@@ -573,85 +584,6 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     );
   }
 
-  Future<void> _showDeleteConfirmation(BuildContext context, int medicineId) async {
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('Delete Medicine'),
-        content: const Text(
-          'Are you sure you want to delete this medicine? This will also cancel all related notifications and remove it from your schedule.',
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('Cancel'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            style: TextButton.styleFrom(
-              foregroundColor: AppColors.red,
-            ),
-            child: const Text('Delete'),
-          ),
-        ],
-      ),
-    );
-
-    if (result == true) {
-      await _deleteMedicine(medicineId);
-    }
-  }
-
-  Future<void> _deleteMedicine(int medicineId) async {
-    try {
-      // Cancel all notifications for this medicine
-      await _scheduler.cancelMedicineReminders(medicineId);
-
-      // Delete the medicine from database
-      final db = await _dbService.database;
-      await db.delete(
-        'medicines',
-        where: 'id = ?',
-        whereArgs: [medicineId],
-      );
-
-      // Delete all related schedules
-      await db.delete(
-        'schedules',
-        where: 'medicineId = ?',
-        whereArgs: [medicineId],
-      );
-
-      // Delete all related history
-      await db.delete(
-        'history',
-        where: 'medicineId = ?',
-        whereArgs: [medicineId],
-      );
-
-      // Refresh the UI
-      await _loadTodayData();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Medicine deleted successfully'),
-            backgroundColor: AppColors.green,
-          ),
-        );
-      }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(
-            content: Text('Failed to delete medicine: $e'),
-            backgroundColor: AppColors.red,
-          ),
-        );
-      }
-    }
-  }
-
   Widget _buildScheduleCard(Map<String, dynamic> schedule) {
     final medicineName = schedule['name'] as String;
     final dosage = schedule['dosage'] as String;
@@ -661,9 +593,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     final medicineId = schedule['medicineId'] as int;
     final iconColor = Color(schedule['iconColor'] as int);
 
-    final isTaken = status == 'taken';
-    final isMissed = status == 'missed';
-    final isPending = status == 'pending';
+    final isTaken = status == _statusTaken;
+    final isMissed = status == _statusMissed;
+    final isPending = status == _statusPending;
 
     // Check if pending dose is overdue (past scheduled time but within grace period)
     bool isOverdue = false;
@@ -703,9 +635,9 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       buttonBackgroundColor = AppColors.red;
       buttonText = 'Missed';
     } else if (isOverdue) {
-      timeIconColor = AppColors.orange;
-      timeTextColor = AppColors.orange;
-      buttonBackgroundColor = AppColors.orange;
+      timeIconColor = AppColors.grey;
+      timeTextColor = AppColors.grey;
+      buttonBackgroundColor = AppColors.grey;
       buttonText = 'Take';
     }
 
@@ -765,10 +697,13 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     }
 
     return GestureDetector(
-      onTap: () {
-        Navigator.pushNamed(context, AppRoutes.medicineDetail, arguments: medicineId);
+      onTap: () async {
+        final result = await Navigator.pushNamed(context, AppRoutes.medicineDetail, arguments: medicineId);
+        if (result == 'deleted' && mounted) {
+          // Refresh the medicine list after deletion
+          await _loadTodayData();
+        }
       },
-      onLongPress: () => _showDeleteConfirmation(context, medicineId),
       child: Container(
         margin: const EdgeInsets.only(bottom: 12),
         padding: const EdgeInsets.all(16),
@@ -817,7 +752,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
                 ),
                 const SizedBox(width: 6),
                 Text(
-                  time,
+                  DateTimeHelpers.formatTime12Hour(time),
                   style: TextStyle(
                     fontSize: 15,
                     color: timeTextColor,

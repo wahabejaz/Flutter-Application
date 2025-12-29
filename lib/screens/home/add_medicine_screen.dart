@@ -103,6 +103,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   }
 
   Future<void> _selectTime(BuildContext context) async {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     final picked = await showTimePicker(
       context: context,
       initialTime: _selectedTime,
@@ -112,7 +113,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
       // Check for duplicate times
       if (_reminderTimes.contains(timeStr)) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           const SnackBar(content: Text('This reminder time is already added')),
         );
         return;
@@ -120,7 +121,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
       // Check if time is valid for today
       if (_isSameDate(_startDate, DateTime.now()) && !_isReminderTimeValidForToday(timeStr)) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           const SnackBar(content: Text('Selected time has already passed. Please choose a future time.')),
         );
         return;

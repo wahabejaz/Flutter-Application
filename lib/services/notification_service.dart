@@ -36,8 +36,11 @@ class NotificationService {
   Future<void> initialize() async {
     if (_initialized) return;
 
+    debugPrint('🔧 Initializing notification service...');
+
     // Initialize timezone data first - critical for accurate scheduling
     tz.initializeTimeZones();
+    debugPrint('🌍 Timezone data initialized, local timezone: ${tz.local}');
 
     // Android initialization settings with proper icon
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -60,15 +63,18 @@ class NotificationService {
       initSettings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
     );
+    debugPrint('✅ Notification plugin initialized');
 
     // Check for initial notification that launched the app
     final initialNotification = await _notifications.getNotificationAppLaunchDetails();
     if (initialNotification?.didNotificationLaunchApp == true) {
       _initialNotificationId = initialNotification?.notificationResponse?.id;
+      debugPrint('📱 App launched by notification ID: $_initialNotificationId');
     }
 
     // Create notification channel for Android 8+ with high importance and sound
     await _createNotificationChannel();
+    debugPrint('📢 Notification channel created');
 
     // Request permissions if not already requested
     if (!_permissionsRequested) {
@@ -76,6 +82,7 @@ class NotificationService {
     }
 
     _initialized = true;
+    debugPrint('🎉 Notification service fully initialized');
   }
 
   bool _permissionsRequested = false;
@@ -239,83 +246,212 @@ class NotificationService {
     required String body,
     required TimeOfDay time,
   }) async {
+    debugPrint('🚀 Starting to schedule daily medicine reminder...');
+    debugPrint('📋 Parameters: id=$id, title="$title", body="$body", time=${time.hour}:${time.minute.toString().padLeft(2, '0')}');
+
     if (!_initialized) {
+      debugPrint('🔧 Notification service not initialized, initializing now...');
       await initialize();
+      debugPrint('✅ Notification service initialized successfully');
     }
 
-    // Check permissions before scheduling - critical for Android
-    if (!await hasPermission()) {
-      debugPrint('❌ Notification permissions not granted - cannot schedule reminders');
-      throw Exception('Notification permissions not granted - cannot schedule reminders');
-    }
+      // Check permissions before scheduling - critical for Android
+      debugPrint('🔐 Checking notification permissions...');
+      final hasPermission = await this.hasPermission();
+      debugPrint('🔐 Permission status: $hasPermission');
 
-    // Cancel any existing notification for this ID first
+      if (!hasPermission) {
+        const errorMsg = '❌ Notification permissions not granted - cannot schedule reminders';
+        debugPrint(errorMsg);
+        throw Exception(errorMsg);
+      }
+
+      // Cancel any existing notification for this ID first
+      try {
+        debugPrint('🗑️ Cancelling existing notification ID $id...');
+        await _notifications.cancel(id);
+        debugPrint('✅ Successfully cancelled existing notification ID $id');
+      } catch (e) {
+        debugPrint('⚠️ Failed to cancel existing notification ID $id: $e');
+        // Continue anyway, this is not critical
+      }
+
+      // Get the next occurrence of the specified time using local timezone
+      // This ensures accurate scheduling regardless of device timezone settings
+      final now = tz.TZDateTime.now(tz.local);
+    late tz.TZDateTime scheduledDate;
+    
     try {
-      await _notifications.cancel(id);
-    } catch (e) {
-      // Continue if cancel fails
+      scheduledDate = tz.TZDateTime(
+        tz.local,
+        now.year,
+        now.month,
+        now.day,
+        time.hour,
+        time.minute,
+      );
+
+      debugPrint('📅 Current time: $now');
+      debugPrint('⏰ Requested time: ${time.hour}:${time.minute.toString().padLeft(2, '0')}');
+      debugPrint('📅 Initial scheduled date: $scheduledDate');
+
+      // If the time has already passed today, schedule for tomorrow
+      // This prevents immediate triggering and ensures future scheduling
+      if (scheduledDate.isBefore(now)) {
+        scheduledDate = scheduledDate.add(const Duration(days: 1));
+        debugPrint('📅 Time already passed today, scheduling for tomorrow: $scheduledDate');
+      } else {
+        debugPrint('📅 Time is in the future today: $scheduledDate');
+      }
+
+      // Validate that scheduled time is not in the past
+      if (scheduledDate.isBefore(now)) {
+        const errorMsg = '❌ ERROR: Scheduled time is still in the past';
+        debugPrint('$errorMsg: $scheduledDate (current: $now)');
+        throw Exception('$errorMsg: $scheduledDate');
+      }
+
+      // Validate the time is reasonable (not more than 24 hours in the future for daily repeats)
+      final timeUntilScheduled = scheduledDate.difference(now);
+      debugPrint('⏱️ Time until notification: $timeUntilScheduled');
+
+      if (timeUntilScheduled > const Duration(hours: 24)) {
+        debugPrint('⚠️ WARNING: Scheduled time is more than 24 hours in the future: $timeUntilScheduled');
+      }
+      if (timeUntilScheduled < const Duration(minutes: 1)) {
+        debugPrint('⚠️ WARNING: Scheduled time is less than 1 minute in the future: $timeUntilScheduled');
+      }
+
+      // Android notification details optimized for battery-efficient delivery
+      const androidDetails = AndroidNotificationDetails(
+        'medicine_reminder_channel',
+        'Medicine Reminders',
+        channelDescription: 'Daily notifications for medicine reminders',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+        enableVibration: true,
+        playSound: true,
+      );
+
+      // iOS notification details
+      const iosDetails = DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      );
+
+      // Notification details for both platforms
+      const notificationDetails = NotificationDetails(
+        android: androidDetails,
+        iOS: iosDetails,
+      );
+
+      // Try exact scheduling first, fall back to exactAllowWhileIdle if it fails
+      AndroidScheduleMode scheduleMode = AndroidScheduleMode.exactAllowWhileIdle;
+      try {
+        debugPrint('🔧 Determining optimal scheduling mode...');
+        // Check if we can use exact scheduling
+        final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+            AndroidFlutterLocalNotificationsPlugin>();
+        if (androidPlugin != null) {
+          final canScheduleExact = await androidPlugin.canScheduleExactNotifications() ?? false;
+          debugPrint('🔧 Can schedule exact notifications: $canScheduleExact');
+          if (canScheduleExact) {
+            scheduleMode = AndroidScheduleMode.exact;
+            debugPrint('🎯 Using exact scheduling mode for better reliability');
+          } else {
+            debugPrint('⚡ Using exactAllowWhileIdle scheduling mode');
+          }
+        } else {
+          debugPrint('⚠️ Android plugin not available, using exactAllowWhileIdle');
+        }
+      } catch (e) {
+        debugPrint('⚠️ Could not determine scheduling mode, using exactAllowWhileIdle: $e');
+      }
+
+      // Schedule the daily repeating notification using zonedSchedule
+      // matchDateTimeComponents: DateTimeComponents.time ensures daily repetition at the same time
+      // androidScheduleMode: exactAllowWhileIdle allows delivery during doze mode
+      // This is the Android-recommended approach that works with battery optimization enabled
+      debugPrint('📅 Attempting to schedule notification with primary mode: $scheduleMode');
+      await _notifications.zonedSchedule(
+        id,
+        title,
+        body,
+        scheduledDate,
+        notificationDetails,
+        androidScheduleMode: scheduleMode,
+        matchDateTimeComponents: DateTimeComponents.time, // Repeat daily at the same time
+      );
+
+      debugPrint('✅ Successfully scheduled daily notification ID $id for ${time.hour}:${time.minute.toString().padLeft(2, '0')} using mode: $scheduleMode');
+
+      // Verify the notification was scheduled by checking pending notifications
+      try {
+        final pending = await getPendingNotifications();
+        final scheduledExists = pending.any((n) => n.id == id);
+        debugPrint('🔍 Verification: Notification ID $id ${scheduledExists ? 'found' : 'NOT FOUND'} in pending notifications (${pending.length} total)');
+      } catch (verifyError) {
+        debugPrint('⚠️ Could not verify notification scheduling: $verifyError');
+      }
+
+    } catch (primaryError) {
+      debugPrint('❌ Failed to schedule notification ID $id with primary mode, trying fallback: $primaryError');
+
+      // Try fallback scheduling mode
+      try {
+        debugPrint('🔄 Attempting fallback scheduling...');
+        const fallbackNotificationDetails = NotificationDetails(
+          android: AndroidNotificationDetails(
+            'medicine_reminder_channel',
+            'Medicine Reminders',
+            channelDescription: 'Daily notifications for medicine reminders',
+            importance: Importance.high,
+            priority: Priority.high,
+            showWhen: true,
+            enableVibration: true,
+            playSound: true,
+          ),
+          iOS: DarwinNotificationDetails(
+            presentAlert: true,
+            presentBadge: true,
+            presentSound: true,
+          ),
+        );
+
+        await _notifications.zonedSchedule(
+          id,
+          title,
+          body,
+          scheduledDate,
+          fallbackNotificationDetails,
+          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          matchDateTimeComponents: DateTimeComponents.time,
+        );
+        debugPrint('✅ Successfully scheduled notification ID $id with fallback mode');
+
+        // Verify fallback scheduling
+        try {
+          final pending = await getPendingNotifications();
+          final scheduledExists = pending.any((n) => n.id == id);
+          debugPrint('🔍 Fallback verification: Notification ID $id ${scheduledExists ? 'found' : 'NOT FOUND'} in pending notifications');
+        } catch (verifyError) {
+          debugPrint('⚠️ Could not verify fallback notification scheduling: $verifyError');
+        }
+
+      } catch (fallbackError) {
+        debugPrint('❌ Failed to schedule notification ID $id even with fallback: $fallbackError');
+        debugPrint('💥 TERMINAL DEBUG: Notification scheduling completely failed for ID $id');
+        debugPrint('💥 TERMINAL DEBUG: Title: "$title"');
+        debugPrint('💥 TERMINAL DEBUG: Body: "$body"');
+        debugPrint('💥 TERMINAL DEBUG: Time: ${time.hour}:${time.minute}');
+        debugPrint('💥 TERMINAL DEBUG: Current Time: ${tz.TZDateTime.now(tz.local)}');
+        debugPrint('💥 TERMINAL DEBUG: Primary Error: $primaryError');
+        debugPrint('💥 TERMINAL DEBUG: Fallback Error: $fallbackError');
+        rethrow;
+      }
     }
-
-    // Get the next occurrence of the specified time using local timezone
-    // This ensures accurate scheduling regardless of device timezone settings
-    final now = tz.TZDateTime.now(tz.local);
-    var scheduledDate = tz.TZDateTime(
-      tz.local,
-      now.year,
-      now.month,
-      now.day,
-      time.hour,
-      time.minute,
-    );
-
-    // If the time has already passed today, schedule for tomorrow
-    // This prevents immediate triggering and ensures future scheduling
-    if (scheduledDate.isBefore(now)) {
-      scheduledDate = scheduledDate.add(const Duration(days: 1));
-    }
-
-    debugPrint('📅 Scheduling notification ID $id for ${scheduledDate.toString()}');
-
-    // Android notification details optimized for battery-efficient delivery
-    const androidDetails = AndroidNotificationDetails(
-      'medicine_reminder_channel',
-      'Medicine Reminders',
-      channelDescription: 'Daily notifications for medicine reminders',
-      importance: Importance.high,
-      priority: Priority.high,
-      showWhen: true,
-      enableVibration: true,
-      playSound: true,
-    );
-
-    // iOS notification details
-    const iosDetails = DarwinNotificationDetails(
-      presentAlert: true,
-      presentBadge: true,
-      presentSound: true,
-    );
-
-    // Notification details for both platforms
-    const notificationDetails = NotificationDetails(
-      android: androidDetails,
-      iOS: iosDetails,
-    );
-
-    // Schedule the daily repeating notification using zonedSchedule
-    // matchDateTimeComponents: DateTimeComponents.time ensures daily repetition at the same time
-    // androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle allows delivery during doze mode
-    // This is the Android-recommended approach that works with battery optimization enabled
-    await _notifications.zonedSchedule(
-      id,
-      title,
-      body,
-      scheduledDate,
-      notificationDetails,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
-      matchDateTimeComponents: DateTimeComponents.time, // Repeat daily at the same time
-    );
-
-    debugPrint('✅ Successfully scheduled daily notification ID $id for ${time.hour}:${time.minute.toString().padLeft(2, '0')}');
   }
 
   /// Cancel a scheduled notification
@@ -323,9 +459,23 @@ class NotificationService {
     await _notifications.cancel(id);
   }
 
-  /// Cancel all scheduled notifications
-  Future<void> cancelAllNotifications() async {
-    await _notifications.cancelAll();
+  /// Debug method to print all pending notifications to terminal
+  Future<void> debugPrintPendingNotifications() async {
+    try {
+      debugPrint('🔍 DEBUG: Checking pending notifications...');
+      final pending = await getPendingNotifications();
+      debugPrint('📋 DEBUG: Found ${pending.length} pending notifications:');
+      
+      for (final notification in pending) {
+        debugPrint('🔔 DEBUG: ID=${notification.id}, Title="${notification.title}", Body="${notification.body}"');
+      }
+      
+      if (pending.isEmpty) {
+        debugPrint('📋 DEBUG: No pending notifications found');
+      }
+    } catch (e) {
+      debugPrint('❌ DEBUG: Failed to get pending notifications: $e');
+    }
   }
 
   /// Show an immediate notification (for testing)
@@ -368,6 +518,53 @@ class NotificationService {
     );
   }
 
+  /// Schedule a test notification in 2 minutes (for debugging scheduling)
+  Future<void> scheduleTestNotification() async {
+    if (!_initialized) {
+      await initialize();
+    }
+
+    final testTime = tz.TZDateTime.now(tz.local).add(const Duration(minutes: 2));
+    debugPrint('🧪 Scheduling test notification for: $testTime');
+
+    const androidDetails = AndroidNotificationDetails(
+      'medicine_reminder_channel',
+      'Medicine Reminders',
+      channelDescription: 'Test notifications',
+      importance: Importance.high,
+      priority: Priority.high,
+      showWhen: true,
+      enableVibration: true,
+      playSound: true,
+    );
+
+    const iosDetails = DarwinNotificationDetails(
+      presentAlert: true,
+      presentBadge: true,
+      presentSound: true,
+    );
+
+    const notificationDetails = NotificationDetails(
+      android: androidDetails,
+      iOS: iosDetails,
+    );
+
+    try {
+      await _notifications.zonedSchedule(
+        999999, // Use a high ID for test notifications
+        'Test Notification 🧪',
+        'This is a test notification scheduled for 2 minutes from now',
+        testTime,
+        notificationDetails,
+        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      );
+      debugPrint('✅ Test notification scheduled successfully');
+    } catch (e) {
+      debugPrint('❌ Failed to schedule test notification: $e');
+      rethrow;
+    }
+  }
+
   /// Get list of pending notifications (for debugging)
   Future<List<PendingNotificationRequest>> getPendingNotifications() async {
     if (!_initialized) {
@@ -385,6 +582,54 @@ class NotificationService {
       debugPrint('❌ Error getting pending notifications: $e');
       return [];
     }
+  }
+
+  /// Get comprehensive notification status for debugging
+  Future<Map<String, dynamic>> getNotificationStatus() async {
+    if (!_initialized) {
+      await initialize();
+    }
+
+    final status = <String, dynamic>{};
+
+    try {
+      // Check permissions
+      status['hasPermission'] = await hasPermission();
+      debugPrint('🔐 Notification permission: ${status['hasPermission']}');
+
+      // Get pending notifications
+      final pending = await getPendingNotifications();
+      status['pendingCount'] = pending.length;
+      status['pendingNotifications'] = pending.map((n) => {
+        'id': n.id,
+        'title': n.title,
+        'body': n.body,
+      }).toList();
+
+      // Check if notifications are enabled
+      final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+      if (androidPlugin != null) {
+        try {
+          status['notificationsEnabled'] = await androidPlugin.areNotificationsEnabled() ?? false;
+          status['exactAlarmsGranted'] = await androidPlugin.canScheduleExactNotifications() ?? false;
+          debugPrint('📱 Android notifications enabled: ${status['notificationsEnabled']}');
+          debugPrint('⏰ Exact alarms granted: ${status['exactAlarmsGranted']}');
+        } catch (e) {
+          debugPrint('⚠️ Could not check Android notification status: $e');
+        }
+      }
+
+      // Current timezone info
+      status['timezone'] = tz.local.name;
+      status['currentTime'] = tz.TZDateTime.now(tz.local).toString();
+
+    } catch (e) {
+      debugPrint('❌ Error getting notification status: $e');
+      status['error'] = e.toString();
+    }
+
+    return status;
   }
 }
 

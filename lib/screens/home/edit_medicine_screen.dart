@@ -32,7 +32,6 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
   final MedicineDAO _medicineDAO = MedicineDAO();
 
   late String _frequency;
-  late String _frequencyUnit;
   late DateTime _startDate;
   late DateTime _endDate;
   TimeOfDay _selectedTime = TimeOfDay.now();
@@ -57,7 +56,6 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
     _stockController.text = widget.medicine.stockCount.toString();
     _notesController.text = widget.medicine.notes ?? '';
     _frequency = widget.medicine.frequency;
-    _frequencyUnit = widget.medicine.frequencyUnit;
     _startDate = widget.medicine.startDate;
     _endDate = widget.medicine.endDate;
     _reminderTimes = List.from(widget.medicine.reminderTimes);
@@ -116,6 +114,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
   }
 
   Future<void> _selectTime(BuildContext context) async {
+    final scaffoldMessenger = ScaffoldMessenger.of(context);
     final picked = await showTimePicker(
       context: context,
       initialTime: _selectedTime,
@@ -125,7 +124,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
 
       // Check for duplicate times
       if (_reminderTimes.contains(timeStr)) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           const SnackBar(content: Text('This reminder time is already added')),
         );
         return;
@@ -133,7 +132,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
 
       // Check if time is valid for today
       if (_isSameDate(_startDate, DateTime.now()) && !_isReminderTimeValidForToday(timeStr)) {
-        ScaffoldMessenger.of(context).showSnackBar(
+        scaffoldMessenger.showSnackBar(
           const SnackBar(content: Text('Selected time has already passed. Please choose a future time.')),
         );
         return;
@@ -410,18 +409,6 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
                         if (value != null) {
                           setState(() {
                             _frequency = value;
-                            // Update frequencyUnit based on selected frequency
-                            switch (value) {
-                              case 'Daily':
-                                _frequencyUnit = '1';
-                                break;
-                              case 'Weekly':
-                                _frequencyUnit = '7';
-                                break;
-                              case 'Monthly':
-                                _frequencyUnit = '30';
-                                break;
-                            }
                           });
                         }
                       },

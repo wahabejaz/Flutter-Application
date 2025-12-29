@@ -3,7 +3,7 @@
 ## Team Members
 - Abuzar
 - Zaraar
-- Wahab Ijaz
+- Wahab Ejaz
 
 ## Description
 A Flutter-based Medicine Reminder app using Firebase Authentication
