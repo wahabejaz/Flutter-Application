@@ -6,18 +6,18 @@
 
 A comprehensive Flutter-based mobile application designed to help users manage their medication schedules effectively. Built with Firebase Authentication for secure user management, SQLite for local data storage, and integrated with Google Gemini AI for intelligent medicine information.
 
-## 🚀 Features
+## Features
 
-- **🔐 Secure Authentication**: Firebase-powered user login and registration
-- **💊 Medicine Scheduling**: Set up custom medication reminders with flexible timing
-- **📅 Refill Tracking**: Monitor medication stock levels and get refill alerts
-- **📊 History Logs**: Keep track of taken medications and adherence patterns
-- **🔔 Local Notifications**: Receive timely reminders even offline
-- **🤖 AI-Powered Insights**: Get detailed medicine information using Google Gemini API
-- **🌙 Dark Mode Support**: Comfortable viewing in all lighting conditions
-- **📱 Cross-Platform**: Runs on Android, iOS, Web, Windows, Linux, and macOS
+- ** Secure Authentication**: Firebase-powered user login and registration
+- ** Medicine Scheduling**: Set up custom medication reminders with flexible timing
+- ** Refill Tracking**: Monitor medication stock levels and get refill alerts
+- ** History Logs**: Keep track of taken medications and adherence patterns
+- ** Local Notifications**: Receive timely reminders even offline
+- ** AI-Powered Insights**: Get detailed medicine information using Google Gemini API
+- ** Dark Mode Support**: Comfortable viewing in all lighting conditions
+- ** Cross-Platform**: Runs on Android, iOS, Web, Windows, Linux, and macOS
 
-## 🛠️ Technologies Used
+## Technologies Used
 
 - **Framework**: Flutter (Dart)
 - **Backend Services**:
@@ -34,7 +34,7 @@ A comprehensive Flutter-based mobile application designed to help users manage t
   - http
   - flutter_dotenv
 
-## 📋 Prerequisites
+## Prerequisites
 
 Before running this project, ensure you have the following installed:
 
@@ -44,7 +44,7 @@ Before running this project, ensure you have the following installed:
 - For Android development: Android SDK and emulator/device
 - For iOS development: Xcode (macOS only)
 
-## 🚀 Installation & Setup
+## Installation & Setup
 
 1. **Clone the repository**:
    ```bash
@@ -85,7 +85,7 @@ Before running this project, ensure you have the following installed:
 5. **View History**: Check medication adherence and logs
 6. **AI Assistance**: Get detailed information about medications using Gemini AI
 
-## 🏗️ Building for Production
+## Building for Production
 
 ### Android APK
 ```bash
@@ -102,14 +102,14 @@ flutter build ios --release
 flutter build web --release
 ```
 
-## 🧪 Testing
+## Testing
 
 Run the test suite:
 ```bash
 flutter test
 ```
 
-## 🤝 Contributing
+## Contributing
 
 We welcome contributions! Please follow these steps:
 
@@ -119,17 +119,17 @@ We welcome contributions! Please follow these steps:
 4. Push to the branch (`git push origin feature/amazing-feature`)
 5. Open a Pull Request
 
-## 📝 Development Team
+## Development Team
 
-- **Abuzar** - Project Lead & Backend Development
-- **Zaraar** - UI/UX Design & Frontend Development
-- **Wahab Ejaz** - AI Integration & Testing
+- **Wahab Ejaz** 
+- **Abuzar** 
+- **Zaraar**
 
-## 📄 License
+## License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
 
-## 🙏 Acknowledgments
+## Acknowledgments
 
 - [Flutter](https://flutter.dev/) for the amazing cross-platform framework
 - [Firebase](https://firebase.google.com/) for authentication and backend services
