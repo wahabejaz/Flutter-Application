@@ -63,11 +63,11 @@ Before running this project, ensure you have the following installed:
    - Download `google-services.json` and place it in `android/app/`
    - Update `lib/firebase_options.dart` with your Firebase config
 
-4. **Set up Gemini AI**:
-   - Get an API key from [Google AI Studio](https://makersuite.google.com/app/apikey)
+4. **Set up DEEPSEEK AI**:
+   - Get an API key from [OPEN ROUTER AI](https://openrouter.ai/settings/keys)
    - Create a `.env` file in the project root:
      ```
-     GEMINI_API_KEY=your_actual_api_key_here
+     OPENROUTER_API_KEY=your_actual_api_key_here
      ```
    - The app automatically loads the API key from environment variables
 
@@ -83,7 +83,7 @@ Before running this project, ensure you have the following installed:
 3. **Set Reminders**: Configure notification times and frequencies
 4. **Track Refills**: Monitor stock levels and set refill reminders
 5. **View History**: Check medication adherence and logs
-6. **AI Assistance**: Get detailed information about medications using Gemini AI
+6. **AI Assistance**: Get detailed information about medications using Deepseek AI
 
 ## Building for Production
 
