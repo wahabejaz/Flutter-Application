@@ -3,6 +3,7 @@ import 'package:medicine_reminder_app/models/schedule_model.dart';
 import 'package:medicine_reminder_app/models/histroy_model.dart';
 import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
 import 'package:medicine_reminder_app/services/notification_service.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
 
@@ -142,6 +143,11 @@ class ReminderScheduler {
             minute,
           );
 
+          if (!scheduleDateTime.isAfter(now)) {
+            currentDate = currentDate.add(const Duration(days: 1));
+            continue;
+          }
+
           // Check if schedule already exists
           final dateStr = currentDate.toIso8601String().split('T')[0];
           final existing = await db.query(
@@ -156,7 +162,7 @@ class ReminderScheduler {
               medicineId: medicine.id!,
               scheduledDate: scheduleDateTime,
               scheduledTime: timeStr,
-              status: scheduleDateTime.isBefore(now) ? 'missed' : 'pending',
+              status: 'pending',
               createdAt: tz.TZDateTime.now(tz.local),
             );
 
@@ -194,9 +200,27 @@ class ReminderScheduler {
       }
     }
 
-    // Delete schedule entries
     final db = await _dbService.database;
-    await db.delete('schedules', where: 'medicineId = ?', whereArgs: [medicineId]);
+    final pendingSchedules = await db.query(
+      'schedules',
+      columns: ['id', 'scheduledDate'],
+      where: 'medicineId = ? AND status = ?',
+      whereArgs: [medicineId, 'pending'],
+    );
+    final now = DateTime.now();
+    final futureIds = pendingSchedules.where((schedule) {
+      return DateTime.parse(schedule['scheduledDate'] as String).isAfter(now);
+    }).map((schedule) => schedule['id'] as int);
+
+    await db.transaction((transaction) async {
+      for (final scheduleId in futureIds) {
+        await transaction.delete(
+          'schedules',
+          where: 'id = ? AND status = ?',
+          whereArgs: [scheduleId, 'pending'],
+        );
+      }
+    });
   }
 
   /// Check and cancel reminders for expired medicines
@@ -268,6 +292,11 @@ class ReminderScheduler {
               minute,
             );
 
+            if (!scheduleDateTime.isAfter(now)) {
+              currentDate = currentDate.add(const Duration(days: 1));
+              continue;
+            }
+
             // Check if schedule already exists
             final dateStr = currentDate.toIso8601String().split('T')[0];
             final existing = await db.query(
@@ -282,7 +311,7 @@ class ReminderScheduler {
                 medicineId: medicine.id!,
                 scheduledDate: scheduleDateTime,
                 scheduledTime: timeStr,
-                status: scheduleDateTime.isBefore(now) ? 'missed' : 'pending',
+                status: 'pending',
                 createdAt: tz.TZDateTime.now(tz.local),
               );
 
@@ -338,33 +367,38 @@ class ReminderScheduler {
     debugPrint('✅ Finished rescheduling all notifications');
   }
 
-  /// Mark a schedule as taken
-  Future<void> markAsTaken(int scheduleId, int medicineId) async {
+  /// Mark a pending dose as taken. A missed dose can only be changed via [lateDose].
+  Future<bool> markAsTaken(
+    int scheduleId,
+    int medicineId, {
+    bool lateDose = false,
+  }) async {
     final db = await _dbService.database;
     final now = tz.TZDateTime.now(tz.local);
+    var transitioned = false;
 
-    // Update schedule status
-    await db.update(
-      'schedules',
-      {
-        'status': 'taken',
-        'takenAt': now.toIso8601String(),
-      },
-      where: 'id = ?',
-      whereArgs: [scheduleId],
-    );
+    await db.transaction((transaction) async {
+      final scheduleMaps = await transaction.query(
+        'schedules',
+        where: 'id = ? AND medicineId = ?',
+        whereArgs: [scheduleId, medicineId],
+      );
+      if (scheduleMaps.isEmpty) return;
 
-    // Get schedule details
-    final scheduleMaps = await db.query(
-      'schedules',
-      where: 'id = ?',
-      whereArgs: [scheduleId],
-    );
-
-    if (scheduleMaps.isNotEmpty) {
       final schedule = Schedule.fromMap(scheduleMaps.first);
+      if (schedule.status != 'pending' &&
+          !(lateDose && schedule.status == 'missed')) {
+        return;
+      }
 
-      // Create history entry
+      final updated = await transaction.update(
+        'schedules',
+        {'status': 'taken', 'takenAt': now.toIso8601String()},
+        where: 'id = ? AND status = ?',
+        whereArgs: [scheduleId, schedule.status],
+      );
+      if (updated != 1) return;
+
       final history = History(
         medicineId: medicineId,
         scheduleId: scheduleId,
@@ -374,67 +408,67 @@ class ReminderScheduler {
         takenAt: now,
         createdAt: now,
       );
-
-      await db.insert('history', history.toMap());
-
-      // Decrement stock count
-      await db.rawUpdate(
-        'UPDATE medicines SET stockCount = stockCount - 1 WHERE id = ? AND stockCount > 0',
-        [medicineId],
+      await transaction.insert(
+        'history',
+        history.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
       );
+      await transaction.rawUpdate(
+        'UPDATE medicines SET stockCount = CASE WHEN stockCount > 0 THEN stockCount - 1 ELSE 0 END, updatedAt = ? WHERE id = ?',
+        [now.toIso8601String(), medicineId],
+      );
+      transitioned = true;
+    });
 
-      // Check if stock is low and send notification
+    if (transitioned) {
       final medicineResult = await db.query(
         'medicines',
         where: 'id = ?',
         whereArgs: [medicineId],
       );
-
       if (medicineResult.isNotEmpty) {
         final medicine = Medicine.fromMap(medicineResult.first);
-        if (medicine.stockCount <= 5 && medicine.stockCount > 0) {
-          // Send low stock notification
+        if (medicine.stockCount <= 5) {
           try {
             await _notificationService.scheduleNotification(
-              id: medicineId + 10000, // Use different ID range for stock notifications
+              id: medicineId + 10000,
               title: 'Low Stock Alert',
               body: '${medicine.name} has only ${medicine.stockCount} ${medicine.stockCount == 1 ? 'tablet' : 'tablets'} remaining',
-              scheduledDate: tz.TZDateTime.now(tz.local).add(const Duration(seconds: 1)), // Show immediately
+              scheduledDate: tz.TZDateTime.now(tz.local).add(const Duration(seconds: 1)),
             );
           } catch (e) {
-            // Notification might fail on web, continue anyway
+            debugPrint('Could not schedule low-stock notification: $e');
           }
         }
       }
     }
+
+    return transitioned;
   }
 
   /// Mark a schedule as missed
-  Future<void> markAsMissed(int scheduleId, int medicineId) async {
+  Future<bool> markAsMissed(int scheduleId, int medicineId) async {
     final db = await _dbService.database;
     final now = tz.TZDateTime.now(tz.local);
+    var transitioned = false;
 
-    // Update schedule status
-    await db.update(
-      'schedules',
-      {
-        'status': 'missed',
-      },
-      where: 'id = ?',
-      whereArgs: [scheduleId],
-    );
+    await db.transaction((transaction) async {
+      final scheduleMaps = await transaction.query(
+        'schedules',
+        where: 'id = ? AND medicineId = ? AND status = ?',
+        whereArgs: [scheduleId, medicineId, 'pending'],
+      );
+      if (scheduleMaps.isEmpty) return;
 
-    // Get schedule details
-    final scheduleMaps = await db.query(
-      'schedules',
-      where: 'id = ?',
-      whereArgs: [scheduleId],
-    );
-
-    if (scheduleMaps.isNotEmpty) {
       final schedule = Schedule.fromMap(scheduleMaps.first);
+      final updated = await transaction.update(
+        'schedules',
+        {'status': 'missed'},
+        where: 'id = ? AND status = ?',
+        whereArgs: [scheduleId, 'pending'],
+      );
+      if (updated != 1) return;
 
-      // Create history entry
       final history = History(
         medicineId: medicineId,
         scheduleId: scheduleId,
@@ -443,9 +477,15 @@ class ReminderScheduler {
         status: 'missed',
         createdAt: now,
       );
+      await transaction.insert(
+        'history',
+        history.toMap(),
+        conflictAlgorithm: ConflictAlgorithm.replace,
+      );
+      transitioned = true;
+    });
 
-      await db.insert('history', history.toMap());
-    }
+    return transitioned;
   }
 
   /// Mark all overdue pending schedules as missed

@@ -87,16 +87,25 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     });
   }
 
-  Future<void> _markAsTaken(int scheduleId, int medicineId) async {
-    await _scheduler.markAsTaken(scheduleId, medicineId);
+  Future<void> _markAsTaken(
+    int scheduleId,
+    int medicineId, {
+    bool lateDose = false,
+  }) async {
+    final transitioned = await _scheduler.markAsTaken(
+      scheduleId,
+      medicineId,
+      lateDose: lateDose,
+    );
     await _loadSchedules();
     await _loadEvents();
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('Medicine marked as taken'),
-          backgroundColor: AppColors.green,
-        ),
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(transitioned
+            ? 'Medicine marked as taken'
+            : 'This dose was already updated'),
+        backgroundColor: transitioned ? AppColors.green : AppColors.orange,
+      ),
       );
     }
   }
@@ -306,6 +315,8 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
     final medicineId = schedule['medicineId'] as int;
     final iconColor = Color(schedule['iconColor'] as int);
     final isTaken = status == 'taken';
+    final isMissed = status == 'missed';
+    final isPending = status == 'pending';
 
     return Container(
       margin: const EdgeInsets.only(bottom: 12),
@@ -327,7 +338,11 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
             width: 4,
             height: 60,
             decoration: BoxDecoration(
-              color: isTaken ? AppColors.green : iconColor,
+                color: isTaken
+                  ? AppColors.green
+                  : isMissed
+                    ? AppColors.orange
+                    : iconColor,
               borderRadius: BorderRadius.circular(2),
             ),
           ),
@@ -360,21 +375,29 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               Icon(
                 Icons.access_time,
                 size: 18,
-                color: isTaken ? AppColors.green : AppColors.orange,
+                color: isTaken
+                  ? AppColors.green
+                  : isMissed
+                    ? AppColors.red
+                    : AppColors.orange,
               ),
               const SizedBox(width: 4),
               Text(
                 DateTimeHelpers.formatTime12Hour(time),
                 style: TextStyle(
                   fontSize: 14,
-                  color: isTaken ? AppColors.green : AppColors.orange,
+                    color: isTaken
+                      ? AppColors.green
+                      : isMissed
+                        ? AppColors.red
+                        : AppColors.orange,
                   fontWeight: FontWeight.w500,
                 ),
               ),
             ],
           ),
           const SizedBox(width: 12),
-          if (!isTaken)
+          if (isPending)
             ElevatedButton(
               onPressed: () => _markAsTaken(scheduleId, medicineId),
               style: ElevatedButton.styleFrom(
@@ -387,15 +410,24 @@ class _ScheduleScreenState extends State<ScheduleScreen> {
               ),
               child: const Text('Take'),
             )
+          else if (isMissed)
+            OutlinedButton(
+              onPressed: () => _markAsTaken(
+                scheduleId,
+                medicineId,
+                lateDose: true,
+              ),
+              child: const Text('Log late dose'),
+            )
           else
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
               decoration: BoxDecoration(
-                color: AppColors.green,
+                color: isTaken ? AppColors.green : AppColors.red,
                 borderRadius: BorderRadius.circular(8),
               ),
-              child: const Text(
-                'Taken',
+              child: Text(
+                isTaken ? 'Taken' : 'Missed',
                 style: TextStyle(
                   color: Colors.white,
                   fontWeight: FontWeight.bold,

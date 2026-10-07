@@ -265,13 +265,15 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     if (scheduleResult.isNotEmpty) {
       final status = scheduleResult.first['status'] as String;
       if (status == _statusPending) {
-        await _scheduler.markAsTaken(scheduleId, medicineId);
+        final transitioned = await _scheduler.markAsTaken(scheduleId, medicineId);
         await _loadTodayData();
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-              content: Text('Medicine marked as taken'),
-              backgroundColor: AppColors.green,
+            SnackBar(
+              content: Text(transitioned
+                  ? 'Medicine marked as taken'
+                  : 'This dose was already updated'),
+              backgroundColor: transitioned ? AppColors.green : AppColors.orange,
             ),
           );
         }
@@ -290,12 +292,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _markAsMissed(int scheduleId, int medicineId) async {
     debugPrint('🚫 Marking schedule $scheduleId as missed for medicine $medicineId');
-    await _scheduler.markAsMissed(scheduleId, medicineId);
+    final transitioned = await _scheduler.markAsMissed(scheduleId, medicineId);
     await _loadTodayData();
-    debugPrint('✅ Successfully marked schedule as missed and refreshed UI');
+    debugPrint('Schedule missed transition result: $transitioned');
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Medicine marked as missed')),
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(transitioned
+            ? 'Medicine marked as missed'
+            : 'This dose was already updated'),
+        backgroundColor: transitioned ? AppColors.green : AppColors.orange,
+      ),
       );
     }
   }

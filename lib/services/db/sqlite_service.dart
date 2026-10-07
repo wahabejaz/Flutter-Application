@@ -31,7 +31,7 @@ class SQLiteService {
     // Open/create the database
     return await openDatabase(
       path,
-      version: 3,
+      version: 4,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -82,7 +82,7 @@ class SQLiteService {
       CREATE TABLE history (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         medicineId INTEGER NOT NULL,
-        scheduleId INTEGER NOT NULL,
+        scheduleId INTEGER NOT NULL UNIQUE,
         scheduledDate TEXT NOT NULL,
         scheduledTime TEXT NOT NULL,
         status TEXT NOT NULL,
@@ -123,6 +123,17 @@ class SQLiteService {
       ''');
       await db.execute(
         'CREATE UNIQUE INDEX IF NOT EXISTS users_uid_unique ON users(uid)',
+      );
+    }
+    if (oldVersion < 4) {
+      await db.execute('''
+        DELETE FROM history
+        WHERE id NOT IN (
+          SELECT MIN(id) FROM history GROUP BY scheduleId
+        )
+      ''');
+      await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS history_schedule_unique ON history(scheduleId)',
       );
     }
     // Handle future database migrations here
