@@ -1,8 +1,39 @@
+import 'dart:async';
+
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:flutter/material.dart';
+
+const _medicineAndroidActions = <AndroidNotificationAction>[
+  AndroidNotificationAction(
+    'taken',
+    'Taken',
+    showsUserInterface: false,
+    cancelNotification: true,
+  ),
+  AndroidNotificationAction(
+    'snooze_10',
+    'Snooze 10 min',
+    showsUserInterface: false,
+    cancelNotification: true,
+  ),
+];
+
+final _medicineDarwinActions = <DarwinNotificationAction>[
+  DarwinNotificationAction.plain('taken', 'Taken'),
+  DarwinNotificationAction.plain('snooze_10', 'Snooze 10 min'),
+];
+
+final _medicineDarwinCategories = <DarwinNotificationCategory>[
+  DarwinNotificationCategory(
+    'medicine_reminder',
+    actions: _medicineDarwinActions,
+  ),
+];
 
 /// Notification Service
 /// Handles scheduling and displaying local notifications for medicine reminders
@@ -54,14 +85,15 @@ class NotificationService {
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
 
     // iOS initialization settings with full permissions
-    const iosSettings = DarwinInitializationSettings(
+    final iosSettings = DarwinInitializationSettings(
       requestAlertPermission: true,
       requestBadgePermission: true,
       requestSoundPermission: true,
+      notificationCategories: _medicineDarwinCategories,
     );
 
     // Initialization settings for both platforms
-    const initSettings = InitializationSettings(
+    final initSettings = InitializationSettings(
       android: androidSettings,
       iOS: iosSettings,
     );
@@ -70,6 +102,8 @@ class NotificationService {
     await _notifications.initialize(
       initSettings,
       onDidReceiveNotificationResponse: _onNotificationTapped,
+      onDidReceiveBackgroundNotificationResponse:
+          notificationResponseBackgroundHandler,
     );
     debugPrint('✅ Notification plugin initialized');
 
@@ -217,6 +251,11 @@ class NotificationService {
 
   /// Handle notification tap
   void _onNotificationTapped(NotificationResponse response) {
+    if (response.actionId == 'taken' || response.actionId == 'snooze_10') {
+      unawaited(_processMedicineAction(response));
+      return;
+    }
+
     // Handle notification tap - call the callback with notification ID
     final notificationId = response.id;
     if (notificationId != null && _onNotificationTapCallback != null) {
@@ -301,11 +340,13 @@ class NotificationService {
         showWhen: true,
         enableVibration: true,
         playSound: true,
+        actions: _medicineAndroidActions,
       ),
       iOS: DarwinNotificationDetails(
         presentAlert: true,
         presentBadge: true,
         presentSound: true,
+        categoryIdentifier: 'medicine_reminder',
       ),
     );
 
@@ -318,6 +359,45 @@ class NotificationService {
       androidScheduleMode: await _androidScheduleMode(),
       matchDateTimeComponents: matchDateTimeComponents,
       payload: payload,
+    );
+  }
+
+  static int snoozeNotificationIdFor(int reminderNotificationId) =>
+      -500000000 - (reminderNotificationId % 500000000);
+
+  Future<void> scheduleSnoozedReminder({
+    required int reminderNotificationId,
+    required int scheduleId,
+    required int medicineId,
+    required String title,
+    required String body,
+  }) async {
+    if (!_initialized) await initialize();
+    final fireDate = tz.TZDateTime.now(tz.local).add(const Duration(minutes: 10));
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'medicine_reminder_channel',
+        'Medicine Reminders',
+        channelDescription: 'Snoozed medicine reminders',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+
+    await _notifications.zonedSchedule(
+      snoozeNotificationIdFor(reminderNotificationId),
+      title,
+      body,
+      fireDate,
+      details,
+      androidScheduleMode: await _androidScheduleMode(),
+      payload: 'snooze:$scheduleId:$medicineId',
     );
   }
 
@@ -701,6 +781,161 @@ class NotificationService {
     }
 
     return status;
+  }
+}
+
+@pragma('vm:entry-point')
+void notificationResponseBackgroundHandler(NotificationResponse response) {
+  WidgetsFlutterBinding.ensureInitialized();
+  unawaited(_processMedicineAction(response));
+}
+
+Future<void> _processMedicineAction(NotificationResponse response) async {
+  final actionId = response.actionId;
+  if (actionId != 'taken' && actionId != 'snooze_10') return;
+
+  final service = NotificationService();
+  try {
+    await service.initialize();
+    final db = await SQLiteService().database;
+    final payload = response.payload?.split(':') ?? const <String>[];
+    int? medicineId;
+    int? scheduleId;
+    int? reminderIndex;
+    String? scheduledTime;
+
+    if (payload.length == 4 && payload[0] == 'reminder') {
+      medicineId = int.tryParse(payload[1]);
+      reminderIndex = int.tryParse(payload[2]);
+      final medicine = medicineId == null
+          ? <String, Object?>{}
+          : (await db.query(
+              'medicines',
+              where: 'id = ?',
+              whereArgs: [medicineId],
+              limit: 1,
+            )).firstOrNull ?? <String, Object?>{};
+      final reminderTimes = (medicine['reminderTimes'] as String? ?? '')
+          .split(',')
+          .map((value) => value.trim())
+          .toList();
+      if (medicineId == null ||
+          reminderIndex == null ||
+          reminderIndex < 0 ||
+          reminderIndex >= reminderTimes.length) {
+        return;
+      }
+      scheduledTime = reminderTimes[reminderIndex];
+      final now = DateTime.now();
+      final pending = await db.query(
+        'schedules',
+        where: 'medicineId = ? AND scheduledTime = ? AND status = ?',
+        whereArgs: [medicineId, scheduledTime, 'pending'],
+      );
+      for (final row in pending) {
+        final scheduledDate = DateTime.parse(row['scheduledDate'] as String).toLocal();
+        if (scheduledDate.year == now.year &&
+            scheduledDate.month == now.month &&
+            scheduledDate.day == now.day) {
+          scheduleId = row['id'] as int;
+          break;
+        }
+      }
+    } else if (payload.length == 3 && payload[0] == 'snooze') {
+      scheduleId = int.tryParse(payload[1]);
+      medicineId = int.tryParse(payload[2]);
+    }
+
+    if (scheduleId == null || medicineId == null) return;
+    final schedule = await db.query(
+      'schedules',
+      where: 'id = ? AND medicineId = ? AND status = ?',
+      whereArgs: [scheduleId, medicineId, 'pending'],
+      limit: 1,
+    );
+    if (schedule.isEmpty) return;
+
+    if (actionId == 'snooze_10') {
+      final medicine = await db.query(
+        'medicines',
+        where: 'id = ?',
+        whereArgs: [medicineId],
+        limit: 1,
+      );
+      if (medicine.isEmpty) return;
+      await service.scheduleSnoozedReminder(
+        reminderNotificationId: response.id ?? medicineId * 100,
+        scheduleId: scheduleId,
+        medicineId: medicineId,
+        title: 'Medicine Reminder',
+        body: 'Snoozed: it\'s time to take ${medicine.first['name']}',
+      );
+      return;
+    }
+
+    final now = tz.TZDateTime.now(tz.local);
+    var stockCount = 0;
+    String? medicineName;
+    await db.transaction((transaction) async {
+      final currentSchedule = await transaction.query(
+        'schedules',
+        where: 'id = ? AND medicineId = ? AND status = ?',
+        whereArgs: [scheduleId, medicineId, 'pending'],
+        limit: 1,
+      );
+      if (currentSchedule.isEmpty) return;
+
+      final updated = await transaction.update(
+        'schedules',
+        {'status': 'taken', 'takenAt': now.toIso8601String()},
+        where: 'id = ? AND status = ?',
+        whereArgs: [scheduleId, 'pending'],
+      );
+      if (updated != 1) return;
+
+      final values = currentSchedule.first;
+      await transaction.insert(
+        'history',
+        {
+          'medicineId': medicineId,
+          'scheduleId': scheduleId,
+          'scheduledDate': values['scheduledDate'],
+          'scheduledTime': values['scheduledTime'],
+          'status': 'taken',
+          'takenAt': now.toIso8601String(),
+          'createdAt': now.toIso8601String(),
+        },
+        conflictAlgorithm: ConflictAlgorithm.ignore,
+      );
+      await transaction.rawUpdate(
+        'UPDATE medicines SET stockCount = CASE WHEN stockCount > 0 THEN stockCount - 1 ELSE 0 END, updatedAt = ? WHERE id = ?',
+        [now.toIso8601String(), medicineId],
+      );
+      final updatedMedicine = await transaction.query(
+        'medicines',
+        columns: ['name', 'stockCount'],
+        where: 'id = ?',
+        whereArgs: [medicineId],
+        limit: 1,
+      );
+      if (updatedMedicine.isNotEmpty) {
+        medicineName = updatedMedicine.first['name'] as String?;
+        stockCount = updatedMedicine.first['stockCount'] as int? ?? 0;
+      }
+    });
+
+    if (medicineName != null && stockCount <= 5) {
+      await service.scheduleNotification(
+        id: -medicineId,
+        title: stockCount == 0 ? 'Out of Stock Alert' : 'Low Stock Alert',
+        body: stockCount == 0
+            ? '$medicineName is out of stock'
+            : '$medicineName has only $stockCount ${stockCount == 1 ? 'tablet' : 'tablets'} remaining',
+        scheduledDate: tz.TZDateTime.now(tz.local).add(const Duration(seconds: 1)),
+      );
+    }
+  } catch (error) {
+    debugPrint('Could not process notification action: $error');
   }
 }
 

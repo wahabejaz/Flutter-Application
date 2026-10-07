@@ -7,6 +7,7 @@ import 'package:medicine_reminder_app/models/medicine_model.dart';
 import 'package:medicine_reminder_app/models/schedule_model.dart';
 import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
 import 'package:medicine_reminder_app/services/db/medicine_dao.dart';
+import 'package:medicine_reminder_app/services/notification_service.dart';
 import 'package:medicine_reminder_app/services/reminder_scheduler.dart';
 import 'package:medicine_reminder_app/services/schedule_planner.dart';
 import 'package:medicine_reminder_app/services/user_data_service.dart';
@@ -288,6 +289,16 @@ void main() {
     expect(stockNotificationId, lessThan(0));
     expect(List.generate(100, (index) => medicineId * 100 + index),
         isNot(contains(stockNotificationId)));
+  });
+
+  test('snooze IDs stay outside reminder and stock ID namespaces', () {
+    const reminderNotificationId = 12345;
+    final snoozeId =
+        NotificationService.snoozeNotificationIdFor(reminderNotificationId);
+
+    expect(snoozeId, lessThan(0));
+    expect(snoozeId, isNot(ReminderScheduler.lowStockNotificationId(12)));
+    expect(snoozeId, isNot(reminderNotificationId));
   });
 }
 
