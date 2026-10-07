@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../routes/app_routes.dart';
 import '../../config/app_colors.dart';
+import '../../services/user_data_service.dart';
 
 /// Profile Screen
 /// Shows user profile and app settings
@@ -15,6 +16,9 @@ class ProfileScreen extends StatefulWidget {
 class _ProfileScreenState extends State<ProfileScreen> {
 
   Future<void> _resetAppData() async {
+    final uid = FirebaseAuth.instance.currentUser?.uid;
+    if (uid == null) return;
+
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (context) => AlertDialog(
@@ -39,14 +43,25 @@ class _ProfileScreenState extends State<ProfileScreen> {
     );
 
     if (confirmed == true) {
-      // TODO: Implement user-specific data reset
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-            content: Text('Data reset not implemented yet'),
-            backgroundColor: AppColors.orange,
-          ),
-        );
+      try {
+        await UserDataService().clearCurrentUserData(uid);
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+              content: Text('App data reset successfully'),
+              backgroundColor: AppColors.green,
+            ),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text('Failed to reset app data: $e'),
+              backgroundColor: AppColors.red,
+            ),
+          );
+        }
       }
     }
   }

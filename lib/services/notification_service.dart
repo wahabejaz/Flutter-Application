@@ -525,6 +525,10 @@ class NotificationService {
     await _notifications.cancel(id);
   }
 
+  Future<void> cancelAllNotifications() async {
+    await _notifications.cancelAll();
+  }
+
   /// Debug method to print all pending notifications to terminal
   Future<void> debugPrintPendingNotifications() async {
     try {

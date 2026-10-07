@@ -56,11 +56,23 @@ class MedicineDAO {
   /// Delete a medicine
   Future<int> deleteMedicine(int id) async {
     final db = await _dbService.database;
-    return await db.delete(
-      'medicines',
-      where: 'id = ?',
-      whereArgs: [id],
-    );
+    return db.transaction((transaction) async {
+      await transaction.delete(
+        'history',
+        where: 'medicineId = ?',
+        whereArgs: [id],
+      );
+      await transaction.delete(
+        'schedules',
+        where: 'medicineId = ?',
+        whereArgs: [id],
+      );
+      return transaction.delete(
+        'medicines',
+        where: 'id = ?',
+        whereArgs: [id],
+      );
+    });
   }
 
   /// Get medicines for today's schedule

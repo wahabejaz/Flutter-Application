@@ -3,13 +3,47 @@ import 'package:provider/provider.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../config/app_colors.dart';
 import '../../services/theme_service.dart';
-import '../../services/db/sqlite_service.dart';
 import '../../services/notification_service.dart';
+import '../../services/user_data_service.dart';
 
 /// Settings Screen
 /// Allows users to configure app settings like theme mode
-class SettingsScreen extends StatelessWidget {
+class SettingsScreen extends StatefulWidget {
   const SettingsScreen({super.key});
+
+  @override
+  State<SettingsScreen> createState() => _SettingsScreenState();
+}
+
+class _SettingsScreenState extends State<SettingsScreen> {
+  late Future<Map<String, dynamic>> _notificationStatus;
+
+  @override
+  void initState() {
+    super.initState();
+    _refreshNotificationStatus();
+  }
+
+  void _refreshNotificationStatus() {
+    _notificationStatus = NotificationService().getNotificationStatus();
+  }
+
+  Future<void> _requestReminderPermissions() async {
+    try {
+      await NotificationService().requestReminderPermissions();
+      if (!mounted) return;
+      setState(_refreshNotificationStatus);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Notification permission status refreshed')),
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Could not request permissions: $e')),
+        );
+      }
+    }
+  }
 
   Future<void> _testNotification(BuildContext context) async {
     try {
@@ -67,56 +101,7 @@ class SettingsScreen extends StatelessWidget {
 
     if (confirmed == true) {
       try {
-        final db = SQLiteService();
-        final notificationService = NotificationService();
-
-        final database = await db.database;
-
-        // Get all medicines for current user
-        final medicines = await database.query(
-          'medicines',
-          where: 'uid = ?',
-          whereArgs: [currentUser.uid],
-        );
-
-        // Cancel notifications for pending schedules and delete all schedules/history for each medicine
-        for (var medicine in medicines) {
-          final medicineId = medicine['id'] as int;
-
-          // Get pending schedules to cancel notifications
-          final pendingSchedules = await database.query(
-            'schedules',
-            where: 'medicineId = ? AND status = ?',
-            whereArgs: [medicineId, 'pending'],
-          );
-
-          // Cancel notifications for pending schedules
-          for (var schedule in pendingSchedules) {
-            final scheduleId = schedule['id'] as int;
-            await notificationService.cancelNotification(scheduleId);
-          }
-
-          // Delete all schedules for this medicine
-          await database.delete(
-            'schedules',
-            where: 'medicineId = ?',
-            whereArgs: [medicineId],
-          );
-
-          // Delete history for this medicine
-          await database.delete(
-            'history',
-            where: 'medicineId = ?',
-            whereArgs: [medicineId],
-          );
-        }
-
-        // Delete medicines
-        await database.delete(
-          'medicines',
-          where: 'uid = ?',
-          whereArgs: [currentUser.uid],
-        );
+        await UserDataService().clearCurrentUserData(currentUser.uid);
 
         if (context.mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
@@ -201,10 +186,45 @@ class SettingsScreen extends StatelessWidget {
                       ),
                       const Divider(),
                       ListTile(
-                        leading: Icon(
-                          Icons.notifications,
-                          color: AppColors.primary,
-                        ),
+                        leading: Icon(Icons.notifications, color: AppColors.primary),
+                        title: const Text('Re-request Notification Permissions'),
+                        subtitle: const Text('Request notification and exact-alarm access'),
+                        trailing: const Icon(Icons.refresh),
+                        onTap: _requestReminderPermissions,
+                      ),
+                      FutureBuilder<Map<String, dynamic>>(
+                        future: _notificationStatus,
+                        builder: (context, snapshot) {
+                          final status = snapshot.data;
+                          if (status == null) {
+                            return const Padding(
+                              padding: EdgeInsets.all(16),
+                              child: Text('Checking notification status...'),
+                            );
+                          }
+                          final pending =
+                              status['pendingNotifications'] as List<dynamic>? ?? [];
+                          final nextFireTimes = pending
+                              .map((item) => item['nextFireTime'])
+                              .whereType<String>()
+                              .take(3)
+                              .map((time) => 'Next fire: $time')
+                              .join('\n');
+                          return Padding(
+                            padding: const EdgeInsets.fromLTRB(72, 0, 16, 16),
+                            child: Text([
+                              'Timezone: ${status['timezone']}',
+                              'Notifications enabled: ${status['notificationsEnabled']}',
+                              'Exact alarms granted: ${status['exactAlarmsGranted']}',
+                              'Pending notifications: ${status['pendingCount']}',
+                              if (nextFireTimes.isNotEmpty) nextFireTimes,
+                            ].join('\n')),
+                          );
+                        },
+                      ),
+                      const Divider(),
+                      ListTile(
+                        leading: Icon(Icons.notifications_active, color: AppColors.primary),
                         title: const Text('Test Notification'),
                         subtitle: const Text('Send a test notification now'),
                         trailing: const Icon(Icons.chevron_right),

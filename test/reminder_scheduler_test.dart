@@ -6,8 +6,10 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:medicine_reminder_app/models/medicine_model.dart';
 import 'package:medicine_reminder_app/models/schedule_model.dart';
 import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
+import 'package:medicine_reminder_app/services/db/medicine_dao.dart';
 import 'package:medicine_reminder_app/services/reminder_scheduler.dart';
 import 'package:medicine_reminder_app/services/schedule_planner.dart';
+import 'package:medicine_reminder_app/services/user_data_service.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -40,6 +42,7 @@ void main() {
     await database.delete('history');
     await database.delete('schedules');
     await database.delete('medicines');
+    await database.delete('users');
     scheduler = ReminderScheduler();
   });
 
@@ -227,14 +230,52 @@ void main() {
       isEmpty,
     );
   });
+
+  test('deleting a medicine removes its schedules and history', () async {
+    final medicineId = await _insertMedicine(database);
+    final scheduleId = await _insertSchedule(database, medicineId);
+    await scheduler.markAsMissed(scheduleId, medicineId);
+
+    await MedicineDAO().deleteMedicine(medicineId);
+
+    expect(await database.query('medicines'), isEmpty);
+    expect(await database.query('schedules'), isEmpty);
+    expect(await database.query('history'), isEmpty);
+  });
+
+  test('user reset cancels all notifications and preserves other users', () async {
+    final targetMedicineId = await _insertMedicine(database, uid: 'target-user');
+    final otherMedicineId = await _insertMedicine(database, uid: 'other-user');
+    final targetScheduleId = await _insertSchedule(database, targetMedicineId);
+    await scheduler.markAsMissed(targetScheduleId, targetMedicineId);
+    await _insertSchedule(database, otherMedicineId);
+    var notificationsCancelled = false;
+
+    await UserDataService(
+      cancelAllNotifications: () async {
+        notificationsCancelled = true;
+      },
+    ).clearCurrentUserData('target-user');
+
+    expect(notificationsCancelled, isTrue);
+    expect(await database.query('medicines', where: 'uid = ?', whereArgs: ['target-user']), isEmpty);
+    expect(await database.query('schedules'), hasLength(1));
+    expect(await database.query('history'), isEmpty);
+    expect(await database.query('users'), isEmpty);
+    expect(
+      await database.query('medicines', where: 'uid = ?', whereArgs: ['other-user']),
+      hasLength(1),
+    );
+  });
 }
 
-Future<int> _insertMedicine(Database database) async {
+Future<int> _insertMedicine(Database database, {String uid = 'scheduler-test-user'}) async {
   final now = DateTime.now();
-  return database.insert('medicines', _medicine(
+  final medicine = _medicine(
     startDate: now,
     endDate: now.add(const Duration(days: 10)),
-  ).toMap());
+  ).copyWith(uid: uid);
+  return database.insert('medicines', medicine.toMap());
 }
 
 Medicine _medicine({
