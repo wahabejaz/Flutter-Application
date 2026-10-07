@@ -10,6 +10,7 @@ class Medicine {
   final DateTime startDate;
   final DateTime endDate;
   final List<String> reminderTimes; // List of times in HH:mm format
+  final List<int> reminderWeekdays;
   final String? notes;
   final int iconColor; // Color value for the medicine icon
   final int stockCount; // Number of tablets/pills remaining
@@ -26,6 +27,7 @@ class Medicine {
     required this.startDate,
     required this.endDate,
     required this.reminderTimes,
+    this.reminderWeekdays = const [],
     this.notes,
     required this.iconColor,
     this.stockCount = 0,
@@ -45,6 +47,7 @@ class Medicine {
       'startDate': startDate.toIso8601String(),
       'endDate': endDate.toIso8601String(),
       'reminderTimes': reminderTimes.join(','), // Store as comma-separated string
+      'reminderWeekdays': reminderWeekdays.join(','),
       'notes': notes,
       'iconColor': iconColor,
       'stockCount': stockCount,
@@ -65,6 +68,11 @@ class Medicine {
       startDate: DateTime.parse(map['startDate'] as String),
       endDate: DateTime.parse(map['endDate'] as String),
       reminderTimes: (map['reminderTimes'] as String?)?.split(',').where((time) => time.trim().isNotEmpty).toList() ?? [],
+        reminderWeekdays: (map['reminderWeekdays'] as String? ?? '')
+          .split(',')
+          .map(int.tryParse)
+          .whereType<int>()
+          .toList(),
       notes: map['notes'] as String?,
       iconColor: map['iconColor'] as int,
       stockCount: map['stockCount'] as int? ?? 0,
@@ -84,6 +92,7 @@ class Medicine {
     DateTime? startDate,
     DateTime? endDate,
     List<String>? reminderTimes,
+    List<int>? reminderWeekdays,
     String? notes,
     int? iconColor,
     int? stockCount,
@@ -100,6 +109,7 @@ class Medicine {
       startDate: startDate ?? this.startDate,
       endDate: endDate ?? this.endDate,
       reminderTimes: reminderTimes ?? this.reminderTimes,
+      reminderWeekdays: reminderWeekdays ?? this.reminderWeekdays,
       notes: notes ?? this.notes,
       iconColor: iconColor ?? this.iconColor,
       stockCount: stockCount ?? this.stockCount,

@@ -3,6 +3,8 @@ import 'package:medicine_reminder_app/models/schedule_model.dart';
 import 'package:medicine_reminder_app/models/histroy_model.dart';
 import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
 import 'package:medicine_reminder_app/services/notification_service.dart';
+import 'package:medicine_reminder_app/services/schedule_planner.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:flutter/material.dart';
 import 'package:timezone/timezone.dart' as tz;
@@ -16,182 +18,109 @@ class ReminderScheduler {
   ReminderScheduler({NotificationService? notificationService})
       : _notificationService = notificationService ?? NotificationService();
 
-  /// Schedule reminders for a medicine
-  /// Creates daily repeating notifications and schedule entries for upcoming days
+  /// Schedule notifications and local schedule rows for an active medicine.
   Future<void> scheduleMedicineReminders(Medicine medicine) async {
-    debugPrint('🏥 Scheduling reminders for medicine: ${medicine.name} (ID: ${medicine.id})');
-    debugPrint('📅 Medicine start: ${medicine.startDate}, end: ${medicine.endDate}');
-    debugPrint('⏰ Reminder times: ${medicine.reminderTimes}');
+    final medicineId = medicine.id;
+    if (medicineId == null) throw ArgumentError('Medicine must have an ID');
 
-    // Cancel any existing notifications for this medicine first
-    await cancelMedicineReminders(medicine.id!);
+    await cancelMedicineReminders(medicineId);
+    if (medicine.frequency == 'As Needed' || medicine.reminderTimes.isEmpty) {
+      return;
+    }
 
     final now = tz.TZDateTime.now(tz.local);
-    final startDate = medicine.startDate;
-    final endDate = medicine.endDate;
-
-    // Only schedule if medicine is active (between start and end date)
-    if (now.isAfter(tz.TZDateTime.from(endDate, tz.local))) {
-      debugPrint('❌ Medicine ${medicine.name} has ended, skipping scheduling');
-      return; // Medicine period has ended
-    }
-
-    // Get the effective start date (today if medicine already started)
     final today = tz.TZDateTime(tz.local, now.year, now.month, now.day);
-    final effectiveStartDate = tz.TZDateTime.from(startDate, tz.local).isBefore(today) ? today : tz.TZDateTime.from(startDate, tz.local);
-
-    debugPrint('📅 Effective start date: $effectiveStartDate, today: $today');
-
-    // Schedule daily repeating notifications for each reminder time
-    for (int i = 0; i < medicine.reminderTimes.length; i++) {
-      final timeStr = medicine.reminderTimes[i];
-      
-      // Validate time format
-      if (timeStr.isEmpty || !timeStr.contains(':')) {
-        debugPrint('⚠️ Skipping invalid time format: "$timeStr" for medicine ${medicine.name}');
-        continue;
-      }
-      
-      final timeParts = timeStr.split(':');
-      if (timeParts.length != 2) {
-        debugPrint('⚠️ Skipping malformed time: "$timeStr" for medicine ${medicine.name}');
-        continue;
-      }
-      
-      try {
-        final hour = int.parse(timeParts[0].trim());
-        final minute = int.parse(timeParts[1].trim());
-        
-        // Validate hour and minute ranges
-        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-          debugPrint('⚠️ Skipping invalid time values: $hour:$minute for medicine ${medicine.name}');
-          continue;
-        }
-        
-        final timeOfDay = TimeOfDay(hour: hour, minute: minute);
-
-        // Generate unique notification ID for this medicine and time
-        final notificationId = medicine.id! * 100 + i;
-
-        debugPrint('🔔 Scheduling notification ID $notificationId for ${medicine.name} at $timeStr');
-
-        try {
-          await _notificationService.scheduleDailyMedicineReminder(
-            id: notificationId,
-            title: 'Medicine Reminder 💊',
-            body: 'It\'s time to take ${medicine.name}',
-            time: timeOfDay,
-          );
-          debugPrint('✅ Successfully scheduled notification ID $notificationId');
-        } catch (e) {
-          // Log the error but continue with other reminders
-          // This prevents one failed reminder from blocking others
-          debugPrint('❌ Failed to schedule reminder for ${medicine.name} at $timeStr: $e');
-        }
-      } catch (e) {
-        debugPrint('⚠️ Failed to parse time "$timeStr" for medicine ${medicine.name}: $e');
-        continue;
-      }
-    }
-
-    // Create schedule entries for the next 7 days (to allow marking as taken/missed)
+    final scheduleThrough = today.add(const Duration(days: 7));
     final db = await _dbService.database;
-    for (var timeStr in medicine.reminderTimes) {
-      // Validate time format
-      if (timeStr.isEmpty || !timeStr.contains(':')) {
-        debugPrint('⚠️ Skipping invalid time format: "$timeStr" for medicine ${medicine.name}');
-        continue;
-      }
-      
+
+    for (var index = 0; index < medicine.reminderTimes.length; index++) {
+      final timeStr = medicine.reminderTimes[index].trim();
       final timeParts = timeStr.split(':');
       if (timeParts.length != 2) {
-        debugPrint('⚠️ Skipping malformed time: "$timeStr" for medicine ${medicine.name}');
-        continue;
+        throw FormatException('Invalid reminder time: $timeStr');
       }
-      
-      try {
-        final hour = int.parse(timeParts[0].trim());
-        final minute = int.parse(timeParts[1].trim());
-        
-        // Validate hour and minute ranges
-        if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-          debugPrint('⚠️ Skipping invalid time values: $hour:$minute for medicine ${medicine.name}');
-          continue;
-        }
+      final hour = int.tryParse(timeParts[0]);
+      final minute = int.tryParse(timeParts[1]);
+      if (hour == null || minute == null || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
+        throw FormatException('Invalid reminder time: $timeStr');
+      }
+      final time = TimeOfDay(hour: hour, minute: minute);
+      final occurrences = MedicineSchedulePlanner.occurrences(
+        medicine: medicine,
+        time: time,
+        now: now,
+        through: scheduleThrough,
+      );
 
-        var currentDate = effectiveStartDate;
-        final endScheduleDate = tz.TZDateTime.from(endDate, tz.local).isBefore(today.add(const Duration(days: 7)))
-            ? tz.TZDateTime.from(endDate, tz.local)
-            : today.add(const Duration(days: 7));
-
-        debugPrint('📅 Scheduling from $currentDate to $endScheduleDate');
-
-        // Safety check to prevent infinite loops
-        int loopCount = 0;
-        const maxLoops = 100; // Maximum 100 days to prevent infinite loops
-
-        while ((currentDate.isBefore(endScheduleDate) ||
-               currentDate.isAtSameMomentAs(endScheduleDate)) &&
-               loopCount < maxLoops) {
-          loopCount++;
-          final scheduleDateTime = tz.TZDateTime(
-            tz.local,
-            currentDate.year,
-            currentDate.month,
-            currentDate.day,
-            hour,
-            minute,
-          );
-
-          if (!scheduleDateTime.isAfter(now)) {
-            currentDate = currentDate.add(const Duration(days: 1));
-            continue;
-          }
-
-          // Check if schedule already exists
-          final dateStr = currentDate.toIso8601String().split('T')[0];
-          final existing = await db.query(
+      for (final occurrence in occurrences) {
+        final dateStr = occurrence.toIso8601String().split('T').first;
+        final existing = await db.query(
+          'schedules',
+          where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+          whereArgs: [medicineId, dateStr, timeStr],
+          limit: 1,
+        );
+        if (existing.isEmpty) {
+          await db.insert(
             'schedules',
-            where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
-            whereArgs: [medicine.id!, dateStr, timeStr],
-          );
-
-          if (existing.isEmpty) {
-            // Create schedule entry
-            final schedule = Schedule(
-              medicineId: medicine.id!,
-              scheduledDate: scheduleDateTime,
+            Schedule(
+              medicineId: medicineId,
+              scheduledDate: occurrence,
               scheduledTime: timeStr,
               status: 'pending',
-              createdAt: tz.TZDateTime.now(tz.local),
-            );
-
-            // Insert schedule into database
-            await db.insert('schedules', schedule.toMap());
-            debugPrint('📝 Created schedule for ${scheduleDateTime.toString()}');
-          } else {
-            debugPrint('⏭️ Schedule already exists for ${scheduleDateTime.toString()}');
-          }
-
-          // Move to next day
-          currentDate = currentDate.add(const Duration(days: 1));
+              createdAt: now,
+            ).toMap(),
+          );
         }
+      }
 
-        if (loopCount >= maxLoops) {
-          debugPrint('⚠️ WARNING: Loop safety limit reached for medicine ${medicine.name}');
+      final scheduleMode = _recurrenceFor(medicine.frequency);
+      final weekdays = medicine.frequency == 'Weekly'
+          ? (medicine.reminderWeekdays.isEmpty
+              ? [tz.TZDateTime.from(medicine.startDate, tz.local).weekday]
+              : medicine.reminderWeekdays)
+          : const <int>[];
+      final reminderDays = weekdays.isEmpty ? [0] : weekdays;
+      for (final weekday in reminderDays) {
+        final recurringMedicine = medicine.frequency == 'Weekly'
+            ? medicine.copyWith(reminderWeekdays: [weekday])
+            : medicine;
+        final firstFire = MedicineSchedulePlanner.nextOccurrence(
+          medicine: recurringMedicine,
+          time: time,
+          now: now,
+        );
+        if (firstFire == null) continue;
+
+        final idOffset = medicine.frequency == 'Weekly'
+            ? index * 7 + weekday - 1
+            : index;
+        if (idOffset >= 100) {
+          throw StateError('Medicine has too many reminder times for notification IDs');
         }
-      } catch (e) {
-        debugPrint('⚠️ Failed to parse time "$timeStr" for medicine ${medicine.name}: $e');
-        continue;
+        await _notificationService.scheduleMedicineReminder(
+          id: medicineId * 100 + idOffset,
+          title: 'Medicine Reminder',
+          body: 'It\'s time to take ${medicine.name}',
+          firstFireDate: firstFire,
+          matchDateTimeComponents: scheduleMode,
+          payload: 'reminder:$medicineId:$index:${medicine.frequency}',
+        );
       }
     }
   }
 
+  DateTimeComponents? _recurrenceFor(String frequency) => switch (frequency) {
+        'Daily' => DateTimeComponents.time,
+        'Weekly' => DateTimeComponents.dayOfWeekAndTime,
+        'Monthly' => null,
+        _ => null,
+      };
+
   /// Cancel all reminders for a medicine
   Future<void> cancelMedicineReminders(int medicineId) async {
-    // Cancel daily repeating notifications
-    // Assuming up to 10 reminder times per medicine
-    for (int i = 0; i < 10; i++) {
+    // IDs 0 through 99 are reserved for this medicine's reminder notifications.
+    for (int i = 0; i < 100; i++) {
       final notificationId = medicineId * 100 + i;
       try {
         await _notificationService.cancelNotification(notificationId);
@@ -257,74 +186,44 @@ class ReminderScheduler {
 
     for (var medicineMap in activeMedicines) {
       final medicine = Medicine.fromMap(medicineMap);
+      if (medicine.frequency == 'As Needed') continue;
 
-      for (var timeStr in medicine.reminderTimes) {
-        // Validate time format
-        if (timeStr.isEmpty || !timeStr.contains(':')) {
-          debugPrint('⚠️ Skipping invalid time format: "$timeStr" for medicine ${medicine.name}');
+      for (final rawTime in medicine.reminderTimes) {
+        final timeStr = rawTime.trim();
+        final parts = timeStr.split(':');
+        if (parts.length != 2) continue;
+        final hour = int.tryParse(parts[0]);
+        final minute = int.tryParse(parts[1]);
+        if (hour == null || minute == null || hour < 0 || hour > 23 || minute < 0 || minute > 59) {
           continue;
         }
-        
-        final timeParts = timeStr.split(':');
-        if (timeParts.length != 2) {
-          debugPrint('⚠️ Skipping malformed time: "$timeStr" for medicine ${medicine.name}');
-          continue;
-        }
-        
-        try {
-          final hour = int.parse(timeParts[0].trim());
-          final minute = int.parse(timeParts[1].trim());
-          
-          // Validate hour and minute ranges
-          if (hour < 0 || hour > 23 || minute < 0 || minute > 59) {
-            debugPrint('⚠️ Skipping invalid time values: $hour:$minute for medicine ${medicine.name}');
-            continue;
-          }
 
-          var currentDate = today;
-          while (currentDate.isBefore(futureDate)) {
-            final scheduleDateTime = tz.TZDateTime(
-              tz.local,
-              currentDate.year,
-              currentDate.month,
-              currentDate.day,
-              hour,
-              minute,
-            );
-
-            if (!scheduleDateTime.isAfter(now)) {
-              currentDate = currentDate.add(const Duration(days: 1));
-              continue;
-            }
-
-            // Check if schedule already exists
-            final dateStr = currentDate.toIso8601String().split('T')[0];
-            final existing = await db.query(
+        final occurrences = MedicineSchedulePlanner.occurrences(
+          medicine: medicine,
+          time: TimeOfDay(hour: hour, minute: minute),
+          now: now,
+          through: futureDate,
+        );
+        for (final occurrence in occurrences) {
+          final dateStr = occurrence.toIso8601String().split('T').first;
+          final existing = await db.query(
+            'schedules',
+            where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+            whereArgs: [medicine.id!, dateStr, timeStr],
+            limit: 1,
+          );
+          if (existing.isEmpty) {
+            await db.insert(
               'schedules',
-              where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
-              whereArgs: [medicine.id!, dateStr, timeStr],
-            );
-
-            if (existing.isEmpty) {
-              // Create schedule entry
-              final schedule = Schedule(
+              Schedule(
                 medicineId: medicine.id!,
-                scheduledDate: scheduleDateTime,
+                scheduledDate: occurrence,
                 scheduledTime: timeStr,
                 status: 'pending',
-                createdAt: tz.TZDateTime.now(tz.local),
-              );
-
-              // Insert schedule into database
-              await db.insert('schedules', schedule.toMap());
-            }
-
-            // Move to next day
-            currentDate = currentDate.add(const Duration(days: 1));
+                createdAt: now,
+              ).toMap(),
+            );
           }
-        } catch (e) {
-          debugPrint('⚠️ Failed to parse time "$timeStr" for medicine ${medicine.name}: $e');
-          continue;
         }
       }
     }

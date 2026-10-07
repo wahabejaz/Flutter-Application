@@ -34,6 +34,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
   DateTime _endDate = DateTime.now().add(const Duration(days: 30));
   TimeOfDay _selectedTime = TimeOfDay.now();
   final List<String> _reminderTimes = [];
+  final List<int> _reminderWeekdays = [];
   late int _selectedIconColor;
   bool _isLoading = false;
 
@@ -162,6 +163,12 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         );
         return;
       }
+      if (_frequency == 'Weekly' && _reminderWeekdays.isEmpty) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('Choose at least one weekday')),
+        );
+        return;
+      }
 
       // Validate date and time for same-day medicines
       final now = DateTime.now();
@@ -196,6 +203,9 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         case 'Weekly':
           frequencyUnit = '7';
           break;
+        case 'Monthly':
+          frequencyUnit = '30';
+          break;
         case 'As Needed':
           frequencyUnit = '0';
           break;
@@ -212,6 +222,8 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
         startDate: _startDate,
         endDate: _endDate,
         reminderTimes: _frequency == 'As Needed' ? [] : _reminderTimes,
+        reminderWeekdays:
+          _frequency == 'Weekly' ? _reminderWeekdays : const [],
         notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         iconColor: _selectedIconColor,
         stockCount: int.parse(_stockController.text.trim()),
@@ -354,17 +366,50 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
                   filled: true,
                   fillColor: Colors.white,
                 ),
-                items: ['Daily', 'Weekly', 'As Needed'].map((String value) {
+                items: ['Daily', 'Weekly', 'Monthly', 'As Needed'].map((String value) {
                   return DropdownMenuItem<String>(
                     value: value,
                     child: Text(value),
                   );
                 }).toList(),
                 onChanged: (value) {
-                  setState(() => _frequency = value!);
+                  if (value == null) return;
+                  setState(() {
+                    _frequency = value;
+                    if (value == 'Weekly' && _reminderWeekdays.isEmpty) {
+                      _reminderWeekdays.add(_startDate.weekday);
+                    }
+                  });
                 },
               ),
               const SizedBox(height: 24),
+              if (_frequency == 'Weekly') ...[
+                _buildSectionTitle('Reminder Days'),
+                const SizedBox(height: 8),
+                Wrap(
+                  spacing: 8,
+                  children: const [
+                    'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+                  ].asMap().entries.map((entry) {
+                    final weekday = entry.key + 1;
+                    return FilterChip(
+                      label: Text(entry.value),
+                      selected: _reminderWeekdays.contains(weekday),
+                      onSelected: (selected) {
+                        setState(() {
+                          if (selected) {
+                            _reminderWeekdays.add(weekday);
+                          } else {
+                            _reminderWeekdays.remove(weekday);
+                          }
+                          _reminderWeekdays.sort();
+                        });
+                      },
+                    );
+                  }).toList(),
+                ),
+                const SizedBox(height: 24),
+              ],
               // Start Date & End Date
               Row(
                 children: [

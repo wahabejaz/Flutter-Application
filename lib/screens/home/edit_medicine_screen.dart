@@ -36,6 +36,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
   late DateTime _endDate;
   TimeOfDay _selectedTime = TimeOfDay.now();
   late List<String> _reminderTimes;
+  late List<int> _reminderWeekdays;
   late int _selectedIconColor;
   bool _isLoading = false;
 
@@ -59,6 +60,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
     _startDate = widget.medicine.startDate;
     _endDate = widget.medicine.endDate;
     _reminderTimes = List.from(widget.medicine.reminderTimes);
+    _reminderWeekdays = List.from(widget.medicine.reminderWeekdays);
     _selectedIconColor = widget.medicine.iconColor;
   }
 
@@ -164,6 +166,12 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
       );
       return;
     }
+    if (_frequency == 'Weekly' && _reminderWeekdays.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Choose at least one weekday')),
+      );
+      return;
+    }
 
     // Validate end date is not before start date
     if (_endDate.isBefore(_startDate)) {
@@ -222,6 +230,8 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
         startDate: _startDate,
         endDate: _endDate,
         reminderTimes: _reminderTimes,
+        reminderWeekdays:
+          _frequency == 'Weekly' ? _reminderWeekdays : const [],
         notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
         iconColor: _selectedIconColor,
         stockCount: int.tryParse(_stockController.text.trim()) ?? 0,
@@ -391,7 +401,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
                     _buildSectionTitle('Frequency'),
                     const SizedBox(height: 8),
                     DropdownButtonFormField<String>(
-                      value: _frequency,
+                      initialValue: _frequency,
                       decoration: InputDecoration(
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(12),
@@ -406,14 +416,43 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
                               ))
                           .toList(),
                       onChanged: (value) {
-                        if (value != null) {
-                          setState(() {
-                            _frequency = value;
-                          });
-                        }
+                        if (value == null) return;
+                        setState(() {
+                          _frequency = value;
+                          if (value == 'Weekly' && _reminderWeekdays.isEmpty) {
+                            _reminderWeekdays.add(_startDate.weekday);
+                          }
+                        });
                       },
                     ),
                     const SizedBox(height: 24),
+                    if (_frequency == 'Weekly') ...[
+                      _buildSectionTitle('Reminder Days'),
+                      const SizedBox(height: 8),
+                      Wrap(
+                        spacing: 8,
+                        children: const [
+                          'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat', 'Sun',
+                        ].asMap().entries.map((entry) {
+                          final weekday = entry.key + 1;
+                          return FilterChip(
+                            label: Text(entry.value),
+                            selected: _reminderWeekdays.contains(weekday),
+                            onSelected: (selected) {
+                              setState(() {
+                                if (selected) {
+                                  _reminderWeekdays.add(weekday);
+                                } else {
+                                  _reminderWeekdays.remove(weekday);
+                                }
+                                _reminderWeekdays.sort();
+                              });
+                            },
+                          );
+                        }).toList(),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
 
                     // Date Range
                     _buildSectionTitle('Date Range'),

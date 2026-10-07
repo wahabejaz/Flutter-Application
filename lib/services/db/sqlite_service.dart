@@ -31,7 +31,7 @@ class SQLiteService {
     // Open/create the database
     return await openDatabase(
       path,
-      version: 4,
+      version: 5,
       onConfigure: (db) async {
         await db.execute('PRAGMA foreign_keys = ON');
       },
@@ -55,6 +55,7 @@ class SQLiteService {
         startDate TEXT NOT NULL,
         endDate TEXT NOT NULL,
         reminderTimes TEXT NOT NULL,
+        reminderWeekdays TEXT NOT NULL DEFAULT '',
         notes TEXT,
         iconColor INTEGER NOT NULL,
         stockCount INTEGER DEFAULT 0,
@@ -134,6 +135,11 @@ class SQLiteService {
       ''');
       await db.execute(
         'CREATE UNIQUE INDEX IF NOT EXISTS history_schedule_unique ON history(scheduleId)',
+      );
+    }
+    if (oldVersion < 5) {
+      await db.execute(
+        "ALTER TABLE medicines ADD COLUMN reminderWeekdays TEXT NOT NULL DEFAULT ''",
       );
     }
     // Handle future database migrations here

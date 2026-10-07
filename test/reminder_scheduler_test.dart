@@ -1,11 +1,13 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:medicine_reminder_app/models/medicine_model.dart';
 import 'package:medicine_reminder_app/models/schedule_model.dart';
 import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
 import 'package:medicine_reminder_app/services/reminder_scheduler.dart';
+import 'package:medicine_reminder_app/services/schedule_planner.dart';
 import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
@@ -143,26 +145,101 @@ void main() {
     expect(history.single['status'], 'taken');
     expect(history.single['takenAt'], isNotNull);
   });
+
+  test('daily occurrences do not precede start and include the end date', () {
+    final medicine = _medicine(
+      startDate: DateTime.utc(2025, 1, 10, 9),
+      endDate: DateTime.utc(2025, 1, 12),
+    );
+    final occurrences = MedicineSchedulePlanner.occurrences(
+      medicine: medicine,
+      time: const TimeOfDay(hour: 8, minute: 30),
+      now: DateTime.utc(2025, 1, 10, 8),
+      through: DateTime.utc(2025, 1, 13),
+    );
+
+    expect(
+      occurrences.map((date) => '${date.month}/${date.day} ${date.hour}:${date.minute}'),
+      ['1/11 8:30', '1/12 8:30'],
+    );
+  });
+
+  test('weekly occurrences honor the selected weekdays', () {
+    final medicine = _medicine(
+      frequency: 'Weekly',
+      reminderWeekdays: const [1, 3],
+      startDate: DateTime.utc(2025, 1, 1),
+      endDate: DateTime.utc(2025, 1, 20),
+    );
+    final occurrences = MedicineSchedulePlanner.occurrences(
+      medicine: medicine,
+      time: const TimeOfDay(hour: 9, minute: 0),
+      now: DateTime.utc(2025, 1, 6, 10),
+      through: DateTime.utc(2025, 1, 15),
+    );
+
+    expect(occurrences.map((date) => date.weekday), [3, 1, 3]);
+    expect(occurrences.map((date) => date.day), [8, 13, 15]);
+  });
+
+  test('monthly occurrences clamp to the last day of shorter months', () {
+    final medicine = _medicine(
+      frequency: 'Monthly',
+      startDate: DateTime.utc(2025, 1, 31),
+      endDate: DateTime.utc(2025, 4, 30),
+    );
+    final occurrences = MedicineSchedulePlanner.occurrences(
+      medicine: medicine,
+      time: const TimeOfDay(hour: 9, minute: 0),
+      now: DateTime.utc(2025, 1, 31, 10),
+      through: DateTime.utc(2025, 4, 30),
+    );
+
+    expect(occurrences.map((date) => '${date.month}/${date.day}'), [
+      '2/28',
+      '3/31',
+      '4/30',
+    ]);
+    expect(
+      MedicineSchedulePlanner.nextOccurrence(
+        medicine: medicine,
+        time: const TimeOfDay(hour: 9, minute: 0),
+        now: DateTime.utc(2025, 2, 1),
+      )?.day,
+      28,
+    );
+  });
 }
 
 Future<int> _insertMedicine(Database database) async {
   final now = DateTime.now();
-  return database.insert(
-    'medicines',
-    Medicine(
-      uid: 'scheduler-test-user',
-      name: 'Test medicine',
-      dosage: '1 tablet',
-      frequency: 'Daily',
-      frequencyUnit: '1',
-      startDate: now,
-      endDate: now.add(const Duration(days: 10)),
-      reminderTimes: const ['09:00'],
-      iconColor: 0xFF00FF00,
-      stockCount: 10,
-      createdAt: now,
-      updatedAt: now,
-    ).toMap(),
+  return database.insert('medicines', _medicine(
+    startDate: now,
+    endDate: now.add(const Duration(days: 10)),
+  ).toMap());
+}
+
+Medicine _medicine({
+  String frequency = 'Daily',
+  List<int> reminderWeekdays = const [],
+  DateTime? startDate,
+  DateTime? endDate,
+}) {
+  final createdAt = DateTime.utc(2025);
+  return Medicine(
+    uid: 'scheduler-test-user',
+    name: 'Test medicine',
+    dosage: '1 tablet',
+    frequency: frequency,
+    frequencyUnit: frequency == 'Weekly' ? '7' : '1',
+    startDate: startDate ?? createdAt,
+    endDate: endDate ?? createdAt.add(const Duration(days: 10)),
+    reminderTimes: const ['09:00'],
+    reminderWeekdays: reminderWeekdays,
+    iconColor: 0xFF00FF00,
+    stockCount: 10,
+    createdAt: createdAt,
+    updatedAt: createdAt,
   );
 }
 

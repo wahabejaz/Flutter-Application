@@ -1,4 +1,5 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
+import 'package:flutter_timezone/flutter_timezone.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
 import 'package:flutter/material.dart';
@@ -40,7 +41,14 @@ class NotificationService {
 
     // Initialize timezone data first - critical for accurate scheduling
     tz.initializeTimeZones();
-    debugPrint('🌍 Timezone data initialized, local timezone: ${tz.local}');
+    try {
+      final deviceTimezone = await FlutterTimezone.getLocalTimezone();
+      tz.setLocalLocation(tz.getLocation(deviceTimezone.identifier));
+    } catch (e) {
+      tz.setLocalLocation(tz.getLocation('Asia/Karachi'));
+      debugPrint('Timezone detection failed; using Asia/Karachi: $e');
+    }
+    debugPrint('Timezone data initialized, local timezone: ${tz.local.name}');
 
     // Android initialization settings with proper icon
     const androidSettings = AndroidInitializationSettings('@mipmap/ic_launcher');
@@ -77,78 +85,116 @@ class NotificationService {
     debugPrint('📢 Notification channel created');
 
     // Request permissions if not already requested
-    if (!_permissionsRequested) {
-      await requestPermission();
-    }
+    await requestPermission();
 
     _initialized = true;
     debugPrint('🎉 Notification service fully initialized');
   }
 
-  bool _permissionsRequested = false;
-
   /// Check if notification permissions are granted
   Future<bool> hasPermission() async {
-    // For Android 13+, check runtime permission
     final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
         AndroidFlutterLocalNotificationsPlugin>();
     if (androidPlugin != null) {
       try {
-        // Check basic notification permission
-        final notificationsEnabled = await androidPlugin.areNotificationsEnabled() ?? true;
-        
-        // For Android 12+, check exact alarm permission
-        // For Android 9-11, exact alarms are allowed by default
-        bool exactAlarmGranted = true;
-        try {
-          exactAlarmGranted = await androidPlugin.canScheduleExactNotifications() ?? true;
-        } catch (e) {
-          // canScheduleExactNotifications() not available on Android < 12, assume allowed
-          exactAlarmGranted = true;
-        }
-        
-        return notificationsEnabled && exactAlarmGranted;
+        return await androidPlugin.areNotificationsEnabled() ?? true;
       } catch (e) {
-        // For older Android versions or if plugin fails, assume enabled
         return true;
       }
     }
-    // For iOS, permissions are requested during initialization
     return true;
+  }
+
+  Future<bool> exactAlarmsGranted() async {
+    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (androidPlugin == null) return true;
+
+    try {
+      return await androidPlugin.canScheduleExactNotifications() ?? true;
+    } catch (e) {
+      debugPrint('Could not check exact-alarm access: $e');
+      return false;
+    }
   }
 
   /// Request notification permissions (Android 13+ and iOS)
   Future<bool> requestPermission() async {
-    if (_permissionsRequested) return await hasPermission();
-
     try {
-      // Android 13+ permissions
       final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
           AndroidFlutterLocalNotificationsPlugin>();
       if (androidPlugin != null) {
-        // Request basic notification permission
-        final notificationsGranted = await androidPlugin.requestNotificationsPermission() ?? false;
-        
-        // Request exact alarm permission (Android 12+ only)
-        bool exactAlarmGranted = true;
-        try {
-          exactAlarmGranted = await androidPlugin.requestExactAlarmsPermission() ?? true;
-        } catch (e) {
-          // requestExactAlarmsPermission() not available on Android < 12, assume allowed
-          exactAlarmGranted = true;
-        }
-        
-        _permissionsRequested = true;
-        return notificationsGranted && exactAlarmGranted;
+        return await androidPlugin.requestNotificationsPermission() ??
+            await hasPermission();
       }
 
-      // For iOS, permissions are handled in initialization settings
-      _permissionsRequested = true;
+      final iosPlugin = _notifications.resolvePlatformSpecificImplementation<
+          IOSFlutterLocalNotificationsPlugin>();
+      if (iosPlugin != null) {
+        return await iosPlugin.requestPermissions(
+          alert: true,
+          badge: true,
+          sound: true,
+        ) ??
+        false;
+      }
+
       return true;
     } catch (e) {
-      _permissionsRequested = true;
       return false;
     }
+  }
+
+  /// Request both permissions after an explicit user action.
+  Future<void> requestReminderPermissions() async {
+    await requestPermission();
+    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    try {
+      await androidPlugin?.requestExactAlarmsPermission();
+    } catch (e) {
+      debugPrint('Could not request exact-alarm access: $e');
+    }
+  }
+
+  Future<AndroidScheduleMode> _androidScheduleMode() async {
+    final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+        AndroidFlutterLocalNotificationsPlugin>();
+    if (androidPlugin == null) return AndroidScheduleMode.exactAllowWhileIdle;
+
+    try {
+      final canScheduleExact =
+          await androidPlugin.canScheduleExactNotifications() ?? false;
+      return canScheduleExact
+          ? AndroidScheduleMode.exactAllowWhileIdle
+          : AndroidScheduleMode.inexactAllowWhileIdle;
+    } catch (e) {
+      debugPrint('Could not check exact-alarm access; using inexact mode: $e');
+      return AndroidScheduleMode.inexactAllowWhileIdle;
+    }
+  }
+
+  String? _nextFireTime(PendingNotificationRequest notification) {
+    final payload = notification.payload;
+    if (payload == null) return null;
+
+    if (payload.startsWith('daily:')) {
+      final parts = payload.substring('daily:'.length).split(':');
+      if (parts.length != 2) return null;
+      final hour = int.tryParse(parts[0]);
+      final minute = int.tryParse(parts[1]);
+      if (hour == null || minute == null) return null;
+
+      final now = tz.TZDateTime.now(tz.local);
+      var next = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+      if (!next.isAfter(now)) next = next.add(const Duration(days: 1));
+      return next.toString();
+    }
+
+    if (payload.startsWith('at:')) {
+      return DateTime.tryParse(payload.substring('at:'.length))?.toLocal().toString();
+    }
+    return null;
   }
 
   /// Create notification channel for Android
@@ -227,7 +273,51 @@ class NotificationService {
       body,
       tzDateTime,
       notificationDetails,
-      androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+      androidScheduleMode: await _androidScheduleMode(),
+      payload: 'at:${tzDateTime.toIso8601String()}',
+    );
+  }
+
+  Future<void> scheduleMedicineReminder({
+    required int id,
+    required String title,
+    required String body,
+    required tz.TZDateTime firstFireDate,
+    required String payload,
+    DateTimeComponents? matchDateTimeComponents,
+  }) async {
+    if (!_initialized) await initialize();
+    if (!await hasPermission()) {
+      throw Exception('Notification permission is not granted');
+    }
+
+    const details = NotificationDetails(
+      android: AndroidNotificationDetails(
+        'medicine_reminder_channel',
+        'Medicine Reminders',
+        channelDescription: 'Daily notifications for medicine reminders',
+        importance: Importance.high,
+        priority: Priority.high,
+        showWhen: true,
+        enableVibration: true,
+        playSound: true,
+      ),
+      iOS: DarwinNotificationDetails(
+        presentAlert: true,
+        presentBadge: true,
+        presentSound: true,
+      ),
+    );
+
+    await _notifications.zonedSchedule(
+      id,
+      title,
+      body,
+      firstFireDate,
+      details,
+      androidScheduleMode: await _androidScheduleMode(),
+      matchDateTimeComponents: matchDateTimeComponents,
+      payload: payload,
     );
   }
 
@@ -255,15 +345,10 @@ class NotificationService {
       debugPrint('✅ Notification service initialized successfully');
     }
 
-      // Check permissions before scheduling - critical for Android
-      debugPrint('🔐 Checking notification permissions...');
-      final hasPermission = await this.hasPermission();
-      debugPrint('🔐 Permission status: $hasPermission');
-
-      if (!hasPermission) {
-        const errorMsg = '❌ Notification permissions not granted - cannot schedule reminders';
-        debugPrint(errorMsg);
-        throw Exception(errorMsg);
+      final notificationsEnabled = await hasPermission();
+      debugPrint('Notifications enabled: $notificationsEnabled');
+      if (!notificationsEnabled) {
+        throw Exception('Notification permission is not granted');
       }
 
       // Cancel any existing notification for this ID first
@@ -347,28 +432,7 @@ class NotificationService {
         iOS: iosDetails,
       );
 
-      // Try exact scheduling first, fall back to exactAllowWhileIdle if it fails
-      AndroidScheduleMode scheduleMode = AndroidScheduleMode.exactAllowWhileIdle;
-      try {
-        debugPrint('🔧 Determining optimal scheduling mode...');
-        // Check if we can use exact scheduling
-        final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
-            AndroidFlutterLocalNotificationsPlugin>();
-        if (androidPlugin != null) {
-          final canScheduleExact = await androidPlugin.canScheduleExactNotifications() ?? false;
-          debugPrint('🔧 Can schedule exact notifications: $canScheduleExact');
-          if (canScheduleExact) {
-            scheduleMode = AndroidScheduleMode.exact;
-            debugPrint('🎯 Using exact scheduling mode for better reliability');
-          } else {
-            debugPrint('⚡ Using exactAllowWhileIdle scheduling mode');
-          }
-        } else {
-          debugPrint('⚠️ Android plugin not available, using exactAllowWhileIdle');
-        }
-      } catch (e) {
-        debugPrint('⚠️ Could not determine scheduling mode, using exactAllowWhileIdle: $e');
-      }
+      final scheduleMode = await _androidScheduleMode();
 
       // Schedule the daily repeating notification using zonedSchedule
       // matchDateTimeComponents: DateTimeComponents.time ensures daily repetition at the same time
@@ -383,6 +447,7 @@ class NotificationService {
         notificationDetails,
         androidScheduleMode: scheduleMode,
         matchDateTimeComponents: DateTimeComponents.time, // Repeat daily at the same time
+        payload: 'daily:${time.hour}:${time.minute}',
       );
 
       debugPrint('✅ Successfully scheduled daily notification ID $id for ${time.hour}:${time.minute.toString().padLeft(2, '0')} using mode: $scheduleMode');
@@ -426,8 +491,9 @@ class NotificationService {
           body,
           scheduledDate,
           fallbackNotificationDetails,
-          androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+          androidScheduleMode: AndroidScheduleMode.inexactAllowWhileIdle,
           matchDateTimeComponents: DateTimeComponents.time,
+          payload: 'daily:${time.hour}:${time.minute}',
         );
         debugPrint('✅ Successfully scheduled notification ID $id with fallback mode');
 
@@ -556,7 +622,8 @@ class NotificationService {
         'This is a test notification scheduled for 2 minutes from now',
         testTime,
         notificationDetails,
-        androidScheduleMode: AndroidScheduleMode.exactAllowWhileIdle,
+        androidScheduleMode: await _androidScheduleMode(),
+        payload: 'at:${testTime.toIso8601String()}',
       );
       debugPrint('✅ Test notification scheduled successfully');
     } catch (e) {
@@ -597,6 +664,13 @@ class NotificationService {
       status['hasPermission'] = await hasPermission();
       debugPrint('🔐 Notification permission: ${status['hasPermission']}');
 
+        final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
+          AndroidFlutterLocalNotificationsPlugin>();
+        status['notificationsEnabled'] = androidPlugin == null
+          ? await hasPermission()
+          : await androidPlugin.areNotificationsEnabled() ?? false;
+        status['exactAlarmsGranted'] = await exactAlarmsGranted();
+
       // Get pending notifications
       final pending = await getPendingNotifications();
       status['pendingCount'] = pending.length;
@@ -604,24 +678,17 @@ class NotificationService {
         'id': n.id,
         'title': n.title,
         'body': n.body,
+        'nextFireTime': _nextFireTime(n),
       }).toList();
-
-      // Check if notifications are enabled
-      final androidPlugin = _notifications.resolvePlatformSpecificImplementation<
-          AndroidFlutterLocalNotificationsPlugin>();
-      if (androidPlugin != null) {
-        try {
-          status['notificationsEnabled'] = await androidPlugin.areNotificationsEnabled() ?? false;
-          status['exactAlarmsGranted'] = await androidPlugin.canScheduleExactNotifications() ?? false;
-          debugPrint('📱 Android notifications enabled: ${status['notificationsEnabled']}');
-          debugPrint('⏰ Exact alarms granted: ${status['exactAlarmsGranted']}');
-        } catch (e) {
-          debugPrint('⚠️ Could not check Android notification status: $e');
-        }
+      debugPrint('Notifications enabled: ${status['notificationsEnabled']}');
+      debugPrint('Exact alarms granted: ${status['exactAlarmsGranted']}');
+      for (final notification in status['pendingNotifications']) {
+        debugPrint('Pending ${notification['id']} next fires at ${notification['nextFireTime'] ?? 'unknown'}');
       }
 
       // Current timezone info
       status['timezone'] = tz.local.name;
+      debugPrint('Timezone: ${status['timezone']}');
       status['currentTime'] = tz.TZDateTime.now(tz.local).toString();
 
     } catch (e) {
