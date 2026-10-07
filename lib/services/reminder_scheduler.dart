@@ -19,19 +19,20 @@ class ReminderScheduler {
       : _notificationService = notificationService ?? NotificationService();
 
   /// Schedule notifications and local schedule rows for an active medicine.
-  Future<void> scheduleMedicineReminders(Medicine medicine) async {
+  Future<int> scheduleMedicineReminders(Medicine medicine) async {
     final medicineId = medicine.id;
     if (medicineId == null) throw ArgumentError('Medicine must have an ID');
 
     await cancelMedicineReminders(medicineId);
     if (medicine.frequency == 'As Needed' || medicine.reminderTimes.isEmpty) {
-      return;
+      return 0;
     }
 
     final now = tz.TZDateTime.now(tz.local);
     final today = tz.TZDateTime(tz.local, now.year, now.month, now.day);
     final scheduleThrough = today.add(const Duration(days: 7));
     final db = await _dbService.database;
+    var scheduledCount = 0;
 
     for (var index = 0; index < medicine.reminderTimes.length; index++) {
       final timeStr = medicine.reminderTimes[index].trim();
@@ -98,16 +99,28 @@ class ReminderScheduler {
         if (idOffset >= 100) {
           throw StateError('Medicine has too many reminder times for notification IDs');
         }
-        await _notificationService.scheduleMedicineReminder(
-          id: medicineId * 100 + idOffset,
-          title: 'Medicine Reminder',
-          body: 'It\'s time to take ${medicine.name}',
-          firstFireDate: firstFire,
-          matchDateTimeComponents: scheduleMode,
-          payload: 'reminder:$medicineId:$index:${medicine.frequency}',
-        );
+        try {
+          await _notificationService.scheduleMedicineReminder(
+            id: medicineId * 100 + idOffset,
+            title: 'Medicine Reminder',
+            body: 'It\'s time to take ${medicine.name}',
+            firstFireDate: firstFire,
+            matchDateTimeComponents: scheduleMode,
+            payload: 'reminder:$medicineId:$index:${medicine.frequency}',
+          );
+          scheduledCount++;
+        } catch (error) {
+          try {
+            await cancelMedicineReminders(medicineId);
+          } catch (cleanupError) {
+            debugPrint('Failed to clean up partial reminder scheduling: $cleanupError');
+          }
+          throw ReminderSchedulingException(medicine.name, error);
+        }
       }
     }
+
+    return scheduledCount;
   }
 
   DateTimeComponents? _recurrenceFor(String frequency) => switch (frequency) {
@@ -430,5 +443,15 @@ class ReminderScheduler {
       }
     }
   }
+}
+
+class ReminderSchedulingException implements Exception {
+  final String medicineName;
+  final Object cause;
+
+  const ReminderSchedulingException(this.medicineName, this.cause);
+
+  @override
+  String toString() => 'Unable to schedule reminders for $medicineName: $cause';
 }
 

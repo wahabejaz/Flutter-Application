@@ -260,8 +260,11 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final message = e is ReminderSchedulingException
+            ? 'Medicine updated, but reminders could not be scheduled: ${e.cause}'
+            : 'Failed to update medicine: $e';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Failed to update medicine: $e')),
+          SnackBar(content: Text(message)),
         );
       }
     } finally {

@@ -250,8 +250,11 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       }
     } catch (e) {
       if (mounted) {
+        final message = e is ReminderSchedulingException
+            ? 'Medicine saved, but reminders could not be scheduled: ${e.cause}'
+            : 'Error adding medicine: $e';
         ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('Error adding medicine: $e')),
+          SnackBar(content: Text(message)),
         );
       }
     } finally {
