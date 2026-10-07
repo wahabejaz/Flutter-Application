@@ -59,6 +59,10 @@ class NotificationService {
     _onNotificationTapCallback = callback;
   }
 
+  void clearNotificationTapCallback() {
+    _onNotificationTapCallback = null;
+  }
+
   NotificationResponse? getInitialNotificationResponse() {
     final response = _initialNotificationResponse;
     _initialNotificationResponse = null;
@@ -1050,7 +1054,7 @@ Future<void> _rearmMonthlyReminder(
   final dateStr = next.toIso8601String().split('T').first;
   final existing = await db.query(
     'schedules',
-    where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+    where: 'medicineId = ? AND substr(scheduledDate, 1, 10) = ? AND scheduledTime = ?',
     whereArgs: [medicineId, dateStr, scheduledTime],
     limit: 1,
   );
@@ -1072,4 +1076,3 @@ Future<void> _rearmMonthlyReminder(
     payload: 'reminder:$medicineId:$reminderIndex:Monthly:${next.millisecondsSinceEpoch}',
   );
 }
-

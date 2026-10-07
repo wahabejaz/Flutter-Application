@@ -7,7 +7,9 @@ import '../../../services/db/medicine_dao.dart';
 /// Refill Tracker Screen
 /// Shows medicines that are running low on stock and need to be refilled
 class RefillTrackerScreen extends StatefulWidget {
-  const RefillTrackerScreen({super.key});
+  final bool embedded;
+
+  const RefillTrackerScreen({super.key, this.embedded = false});
 
   @override
   State<RefillTrackerScreen> createState() => _RefillTrackerScreenState();
@@ -114,7 +116,9 @@ class _RefillTrackerScreenState extends State<RefillTrackerScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
+        appBar: widget.embedded
+          ? null
+          : AppBar(
         title: const Text('Refill Tracker'),
         backgroundColor: AppColors.pastelOrange,
         foregroundColor: Colors.white,
@@ -125,7 +129,7 @@ class _RefillTrackerScreenState extends State<RefillTrackerScreen> {
             tooltip: 'Refresh',
           ),
         ],
-      ),
+        ),
       body: _isLoading
           ? const Center(child: CircularProgressIndicator())
           : _lowStockMedicines.isEmpty

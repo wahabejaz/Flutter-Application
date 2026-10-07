@@ -8,32 +8,20 @@ import 'dart:developer' as developer;
 ///
 /// SETUP INSTRUCTIONS:
 /// 1. Get an OpenRouter API key from https://openrouter.ai/keys
-/// 2. Add it to `.env` as OPENROUTER_API_KEY=your_key_here
-/// 3. Ensure `dotenv.load()` is called in `main()` before using this service
-/// 4. This service calls OpenRouter's chat/completions endpoint on demand (button taps only)
+/// An API key may be provided at runtime; never bundle `.env` as an app asset.
+/// Without a key, common medicines use local fallback explanations.
 class AIService {
   // Use OpenRouter chat completions endpoint with DeepSeek Chat model
   // NOTE: Do not call this service from a widget's build() method — call from event handlers (button taps) instead.
   static const String _apiUrl = 'https://openrouter.ai/api/v1/chat/completions';
   static const String _model = 'deepseek/deepseek-chat';
 
-  late final String _apiKey;
+  final String? _apiKey;
 
-  AIService() {
-    // Ensure dotenv is loaded before accessing env
-    if (!dotenv.isInitialized) {
-      throw Exception('Environment variables not loaded. Please ensure dotenv.load() is called in main().');
-    }
-
-    // Read OpenRouter API key from .env (OPENROUTER_API_KEY)
-    final apiKey = dotenv.env['OPENROUTER_API_KEY'];
-    if (apiKey == null || apiKey.isEmpty || apiKey == 'YOUR_OPENROUTER_API_KEY_HERE') {
-      throw Exception('OPENROUTER_API_KEY not found in .env file. Please add your OpenRouter API key to enable AI features.');
-    }
-
-    // Do not attempt to validate provider-specific prefixes here — just ensure a non-empty key is provided.
-    _apiKey = apiKey;
-  }
+  AIService()
+      : _apiKey = dotenv.isInitialized
+            ? dotenv.env['OPENROUTER_API_KEY']
+            : null;
 
   /// Generate a brief explanation of what a medicine is commonly used for
   /// Returns a short paragraph explaining the medicine's general purpose
@@ -42,6 +30,12 @@ class AIService {
     required String dosage,
     required String frequency,
   }) async {
+    final apiKey = _apiKey;
+    if (apiKey == null || apiKey.isEmpty || apiKey == 'YOUR_OPENROUTER_API_KEY_HERE') {
+      return _localFallback(name) ??
+          'AI explanations are unavailable without a configured API key. Ask a pharmacist or clinician about this medicine.';
+    }
+
     try {
       // Prepare prompt and OpenRouter chat-completions payload.
       // Remove unnecessary braces from simple interpolations.
@@ -51,7 +45,7 @@ class AIService {
 
       // OpenRouter requires Authorization header with Bearer token and Content-Type header
       final headers = {
-        'Authorization': 'Bearer $_apiKey',
+        'Authorization': 'Bearer $apiKey',
         'Content-Type': 'application/json',
       };
 

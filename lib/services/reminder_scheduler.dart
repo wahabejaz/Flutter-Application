@@ -60,7 +60,7 @@ class ReminderScheduler {
         final dateStr = occurrence.toIso8601String().split('T').first;
         final existing = await db.query(
           'schedules',
-          where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+          where: 'medicineId = ? AND substr(scheduledDate, 1, 10) = ? AND scheduledTime = ?',
           whereArgs: [medicineId, dateStr, timeStr],
           limit: 1,
         );
@@ -100,7 +100,7 @@ class ReminderScheduler {
           final dateStr = firstFire.toIso8601String().split('T').first;
           final existing = await db.query(
             'schedules',
-            where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+            where: 'medicineId = ? AND substr(scheduledDate, 1, 10) = ? AND scheduledTime = ?',
             whereArgs: [medicineId, dateStr, timeStr],
             limit: 1,
           );
@@ -154,6 +154,62 @@ class ReminderScheduler {
         'Monthly' => null,
         _ => null,
       };
+
+  Future<bool> snoozeSchedule(int scheduleId, int medicineId) async {
+    final db = await _dbService.database;
+    final rows = await db.rawQuery('''
+      SELECT s.scheduledTime, s.status, m.name, m.reminderTimes,
+             m.frequency, m.reminderWeekdays
+      FROM schedules s
+      INNER JOIN medicines m ON m.id = s.medicineId
+      WHERE s.id = ? AND s.medicineId = ?
+    ''', [scheduleId, medicineId]);
+    if (rows.isEmpty || rows.first['status'] != 'pending') return false;
+
+    final row = rows.first;
+    final reminderTimes = (row['reminderTimes'] as String? ?? '')
+        .split(',')
+        .map((value) => value.trim())
+        .toList();
+    final reminderIndex = reminderTimes.indexOf(row['scheduledTime'] as String);
+    if (reminderIndex < 0) return false;
+
+    var offset = reminderIndex;
+    if (row['frequency'] == 'Weekly') {
+      final date = DateTime.parse(
+        (await db.query(
+          'schedules',
+          columns: ['scheduledDate'],
+          where: 'id = ?',
+          whereArgs: [scheduleId],
+          limit: 1,
+        )).first['scheduledDate'] as String,
+      ).toLocal();
+      final weekdays = (row['reminderWeekdays'] as String? ?? '')
+          .split(',')
+          .map(int.tryParse)
+          .whereType<int>()
+          .toList();
+      final selectedDays = weekdays.isEmpty ? [date.weekday] : weekdays;
+      offset = reminderIndex * 7 + selectedDays.indexOf(date.weekday);
+      if (offset < 0) offset = reminderIndex * 7 + date.weekday - 1;
+    }
+
+    final reminderNotificationId = medicineId * 100 + offset;
+    try {
+      await _notificationService.scheduleSnoozedReminder(
+        reminderNotificationId: reminderNotificationId,
+        scheduleId: scheduleId,
+        medicineId: medicineId,
+        title: 'Medicine Reminder',
+        body: 'Snoozed: it\'s time to take ${row['name']}',
+      );
+      return true;
+    } catch (error) {
+      debugPrint('Failed to snooze medicine reminder: $error');
+      return false;
+    }
+  }
 
   /// Cancel all reminders for a medicine
   Future<void> cancelMedicineReminders(int medicineId) async {

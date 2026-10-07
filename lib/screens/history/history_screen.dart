@@ -8,7 +8,9 @@ import '../../utils/date_time_helpers.dart';
 /// History Screen
 /// Shows medicine intake history with filters (Taken, Missed, All)
 class HistoryScreen extends StatefulWidget {
-  const HistoryScreen({super.key});
+  final bool embedded;
+
+  const HistoryScreen({super.key, this.embedded = false});
 
   @override
   State<HistoryScreen> createState() => _HistoryScreenState();
@@ -87,7 +89,9 @@ class _HistoryScreenState extends State<HistoryScreen> with WidgetsBindingObserv
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: AppColors.background,
-      appBar: AppBar(
+        appBar: widget.embedded
+          ? null
+          : AppBar(
         title: const Text(
           'History Log',
           style: TextStyle(
@@ -97,7 +101,7 @@ class _HistoryScreenState extends State<HistoryScreen> with WidgetsBindingObserv
         ),
         backgroundColor: Colors.white,
         elevation: 0,
-      ),
+        ),
       body: Column(
         children: [
           // Filter Buttons

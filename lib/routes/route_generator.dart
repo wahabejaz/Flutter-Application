@@ -10,7 +10,7 @@ import '../screens/auth/signin_screen.dart';
 import '../screens/auth/signup_screen.dart';
 import '../screens/auth/forgot_password_screen.dart';
 import '../screens/auth/verify_email_screen.dart';
-import '../screens/home/home_screen.dart';
+import '../screens/home/main_shell_screen.dart';
 import '../screens/home/add_medicine_screen.dart';
 import '../screens/home/edit_medicine_screen.dart';
 import '../screens/home/medicine_detail_screen.dart';
@@ -71,7 +71,7 @@ class RouteGenerator {
         return MaterialPageRoute(builder: (_) => const VerifyEmailScreen());
 
       case AppRoutes.home:
-        return MaterialPageRoute(builder: (_) => const HomeScreen());
+        return MaterialPageRoute(builder: (_) => const MainShellScreen());
 
       case AppRoutes.addMedicine:
         return MaterialPageRoute(builder: (_) => const AddMedicineScreen());

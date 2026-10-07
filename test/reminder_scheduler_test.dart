@@ -85,6 +85,32 @@ void main() {
     );
   });
 
+  test('local date matching preserves early Karachi schedules', () async {
+    final medicineId = await _insertMedicine(database);
+    final karachi = tz.getLocation('Asia/Karachi');
+    final localSchedule = tz.TZDateTime(karachi, 2025, 1, 10, 2, 0);
+    const storedLocalSchedule = '2025-01-10T02:00:00.000+05:00';
+    final scheduleId = await database.insert('schedules', {
+      'medicineId': medicineId,
+      'scheduledDate': storedLocalSchedule,
+      'scheduledTime': '02:00',
+      'status': 'pending',
+      'createdAt': localSchedule.toIso8601String(),
+    });
+
+    final sqliteUtcDate = await database.rawQuery(
+      'SELECT date(scheduledDate) AS day FROM schedules WHERE id = ?',
+      [scheduleId],
+    );
+    final localStoredDate = await database.rawQuery(
+      'SELECT substr(scheduledDate, 1, 10) AS day FROM schedules WHERE id = ?',
+      [scheduleId],
+    );
+
+    expect(sqliteUtcDate.single['day'], '2025-01-09');
+    expect(localStoredDate.single['day'], '2025-01-10');
+  });
+
   test('taken transition decrements stock and writes history once', () async {
     final medicineId = await _insertMedicine(database);
     final scheduleId = await _insertSchedule(database, medicineId);
