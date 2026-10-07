@@ -70,6 +70,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
 
   Future<void> _rescheduleNotifications() async {
     try {
+      await _scheduler.cancelExpiredReminders();
       await _scheduler.rescheduleAllNotifications();
     } catch (e) {
       // Silently handle errors to avoid disrupting the user experience
