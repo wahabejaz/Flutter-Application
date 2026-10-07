@@ -209,6 +209,24 @@ void main() {
       28,
     );
   });
+
+  test('as-needed medicines do not produce scheduled occurrences', () {
+    final medicine = _medicine(
+      frequency: 'As Needed',
+      startDate: DateTime.utc(2025, 1, 1),
+      endDate: DateTime.utc(2025, 1, 31),
+    );
+
+    expect(
+      MedicineSchedulePlanner.occurrences(
+        medicine: medicine,
+        time: const TimeOfDay(hour: 9, minute: 0),
+        now: DateTime.utc(2025, 1, 1),
+        through: DateTime.utc(2025, 1, 31),
+      ),
+      isEmpty,
+    );
+  });
 }
 
 Future<int> _insertMedicine(Database database) async {

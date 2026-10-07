@@ -160,7 +160,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
 
   Future<void> _updateMedicine() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_reminderTimes.isEmpty) {
+    if (_frequency != 'As Needed' && _reminderTimes.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('Please add at least one reminder time')),
       );
@@ -183,7 +183,9 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
 
     // Validate date and time for same-day medicines
     final now = DateTime.now();
-    if (_isSameDate(_startDate, now) && _isSameDate(_endDate, now)) {
+    if (_frequency != 'As Needed' &&
+      _isSameDate(_startDate, now) &&
+      _isSameDate(_endDate, now)) {
       // For same-day medicines, check if any reminder time has already passed
       for (final timeStr in _reminderTimes) {
         if (!_isReminderTimeValidForToday(timeStr)) {
@@ -215,6 +217,9 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
         case 'Monthly':
           frequencyUnit = '30';
           break;
+        case 'As Needed':
+          frequencyUnit = '0';
+          break;
         default:
           frequencyUnit = '1';
       }
@@ -229,7 +234,8 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
         frequencyUnit: frequencyUnit,
         startDate: _startDate,
         endDate: _endDate,
-        reminderTimes: _reminderTimes,
+        reminderTimes:
+          _frequency == 'As Needed' ? const [] : _reminderTimes,
         reminderWeekdays:
           _frequency == 'Weekly' ? _reminderWeekdays : const [],
         notes: _notesController.text.trim().isEmpty ? null : _notesController.text.trim(),
@@ -409,7 +415,7 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
                         filled: true,
                         fillColor: Colors.white,
                       ),
-                      items: ['Daily', 'Weekly', 'Monthly']
+                      items: ['Daily', 'Weekly', 'Monthly', 'As Needed']
                           .map((freq) => DropdownMenuItem(
                                 value: freq,
                                 child: Text(freq),
@@ -530,10 +536,11 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
                     ),
                     const SizedBox(height: 24),
 
-                    // Reminder Times
-                    _buildSectionTitle('Reminder Times'),
-                    const SizedBox(height: 8),
-                    Container(
+                    if (_frequency != 'As Needed') ...[
+                      // Reminder Times
+                      _buildSectionTitle('Reminder Times'),
+                      const SizedBox(height: 8),
+                      Container(
                       padding: const EdgeInsets.all(16),
                       decoration: BoxDecoration(
                         color: Colors.grey.shade50,
@@ -575,8 +582,9 @@ class _EditMedicineScreenState extends State<EditMedicineScreen> {
                           ],
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 24),
+                      ),
+                      const SizedBox(height: 24),
+                    ],
 
                     // Notes
                     _buildSectionTitle('Notes'),
