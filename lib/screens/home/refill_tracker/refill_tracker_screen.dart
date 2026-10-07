@@ -32,9 +32,9 @@ class _RefillTrackerScreenState extends State<RefillTrackerScreen> {
 
       final allMedicines = await _medicineDAO.getAllMedicines(user.uid);
       // Filter medicines with low stock (less than 10)
-      _lowStockMedicines = allMedicines.where((medicine) =>
-        medicine.stockCount < 10 && medicine.stockCount > 0
-      ).toList();
+      _lowStockMedicines = allMedicines
+          .where((medicine) => medicine.stockCount < 10)
+          .toList();
 
       // Sort by stock count (lowest first)
       _lowStockMedicines.sort((a, b) => a.stockCount.compareTo(b.stockCount));
@@ -211,6 +211,7 @@ class _RefillTrackerScreenState extends State<RefillTrackerScreen> {
   }
 
   StockLevel _getStockLevel(int stockCount) {
+    if (stockCount <= 0) return StockLevel.outOfStock;
     if (stockCount <= 2) return StockLevel.critical;
     if (stockCount <= 5) return StockLevel.low;
     return StockLevel.warning;
@@ -218,12 +219,14 @@ class _RefillTrackerScreenState extends State<RefillTrackerScreen> {
 
   Widget _buildStockIndicator(StockLevel level) {
     final color = switch (level) {
+      StockLevel.outOfStock => Colors.red.shade900,
       StockLevel.critical => Colors.red,
       StockLevel.low => Colors.orange,
       StockLevel.warning => Colors.yellow[700],
     };
 
     final text = switch (level) {
+      StockLevel.outOfStock => 'Out of stock',
       StockLevel.critical => 'Critical - Refill immediately!',
       StockLevel.low => 'Low stock - Refill soon',
       StockLevel.warning => 'Running low',
@@ -249,6 +252,7 @@ class _RefillTrackerScreenState extends State<RefillTrackerScreen> {
 }
 
 enum StockLevel {
+  outOfStock,
   critical,
   low,
   warning,

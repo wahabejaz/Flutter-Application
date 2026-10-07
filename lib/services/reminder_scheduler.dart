@@ -12,6 +12,8 @@ import 'package:timezone/timezone.dart' as tz;
 /// Reminder Scheduler Service
 /// Handles scheduling reminders for medicines and creating schedule entries
 class ReminderScheduler {
+  static int lowStockNotificationId(int medicineId) => -medicineId;
+
   final NotificationService _notificationService;
   final SQLiteService _dbService = SQLiteService();
 
@@ -140,6 +142,13 @@ class ReminderScheduler {
       } catch (e) {
         // Continue canceling others
       }
+    }
+    try {
+      await _notificationService.cancelNotification(
+        lowStockNotificationId(medicineId),
+      );
+    } catch (e) {
+      debugPrint('Failed to cancel low-stock notification: $e');
     }
 
     final db = await _dbService.database;
@@ -343,9 +352,13 @@ class ReminderScheduler {
         if (medicine.stockCount <= 5) {
           try {
             await _notificationService.scheduleNotification(
-              id: medicineId + 10000,
-              title: 'Low Stock Alert',
-              body: '${medicine.name} has only ${medicine.stockCount} ${medicine.stockCount == 1 ? 'tablet' : 'tablets'} remaining',
+                id: lowStockNotificationId(medicineId),
+                title: medicine.stockCount == 0
+                  ? 'Out of Stock Alert'
+                  : 'Low Stock Alert',
+                body: medicine.stockCount == 0
+                  ? '${medicine.name} is out of stock'
+                  : '${medicine.name} has only ${medicine.stockCount} ${medicine.stockCount == 1 ? 'tablet' : 'tablets'} remaining',
               scheduledDate: tz.TZDateTime.now(tz.local).add(const Duration(seconds: 1)),
             );
           } catch (e) {

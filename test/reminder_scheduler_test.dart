@@ -267,14 +267,40 @@ void main() {
       hasLength(1),
     );
   });
+
+  test('taking the last dose reaches zero and stock IDs are disjoint', () async {
+    final medicineId = await _insertMedicine(database, stockCount: 1);
+    final scheduleId = await _insertSchedule(database, medicineId);
+
+    expect(await scheduler.markAsTaken(scheduleId, medicineId), isTrue);
+    expect(await scheduler.markAsTaken(scheduleId, medicineId), isFalse);
+
+    final medicine = await database.query(
+      'medicines',
+      columns: ['stockCount'],
+      where: 'id = ?',
+      whereArgs: [medicineId],
+    );
+    final stockNotificationId =
+        ReminderScheduler.lowStockNotificationId(medicineId);
+
+    expect(medicine.single['stockCount'], 0);
+    expect(stockNotificationId, lessThan(0));
+    expect(List.generate(100, (index) => medicineId * 100 + index),
+        isNot(contains(stockNotificationId)));
+  });
 }
 
-Future<int> _insertMedicine(Database database, {String uid = 'scheduler-test-user'}) async {
+Future<int> _insertMedicine(
+  Database database, {
+  String uid = 'scheduler-test-user',
+  int stockCount = 10,
+}) async {
   final now = DateTime.now();
   final medicine = _medicine(
     startDate: now,
     endDate: now.add(const Duration(days: 10)),
-  ).copyWith(uid: uid);
+  ).copyWith(uid: uid, stockCount: stockCount);
   return database.insert('medicines', medicine.toMap());
 }
 
