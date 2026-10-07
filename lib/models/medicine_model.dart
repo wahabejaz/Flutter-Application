@@ -2,7 +2,7 @@
 /// Represents a medicine/medication entry in the app
 class Medicine {
   final int? id;
-  final String? uid; // Firebase Auth UID
+  final String uid; // Firebase Auth UID
   final String name;
   final String dosage;
   final String frequency; // e.g., "Daily", "Weekly", "Unit"
@@ -18,7 +18,7 @@ class Medicine {
 
   Medicine({
     this.id,
-    this.uid,
+    required this.uid,
     required this.name,
     required this.dosage,
     required this.frequency,
@@ -57,7 +57,7 @@ class Medicine {
   factory Medicine.fromMap(Map<String, dynamic> map) {
     return Medicine(
       id: map['id'] as int?,
-      uid: map['uid'] as String?,
+      uid: map['uid'] as String,
       name: map['name'] as String,
       dosage: map['dosage'] as String,
       frequency: map['frequency'] as String,

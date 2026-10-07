@@ -31,7 +31,10 @@ class SQLiteService {
     // Open/create the database
     return await openDatabase(
       path,
-      version: 2,
+      version: 3,
+      onConfigure: (db) async {
+        await db.execute('PRAGMA foreign_keys = ON');
+      },
       onCreate: _onCreate,
       onUpgrade: _onUpgrade,
     );
@@ -94,7 +97,7 @@ class SQLiteService {
     await db.execute('''
       CREATE TABLE users (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        uid TEXT,
+        uid TEXT UNIQUE,
         email TEXT,
         fullName TEXT,
         createdAt TEXT,
@@ -109,6 +112,18 @@ class SQLiteService {
     if (oldVersion < 2) {
       // Add uid column to medicines table
       await db.execute('ALTER TABLE medicines ADD COLUMN uid TEXT NOT NULL DEFAULT ""');
+    }
+    if (oldVersion < 3) {
+      await db.execute('''
+        DELETE FROM users
+        WHERE uid IS NOT NULL
+          AND id NOT IN (
+            SELECT MIN(id) FROM users WHERE uid IS NOT NULL GROUP BY uid
+          )
+      ''');
+      await db.execute(
+        'CREATE UNIQUE INDEX IF NOT EXISTS users_uid_unique ON users(uid)',
+      );
     }
     // Handle future database migrations here
   }

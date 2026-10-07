@@ -26,6 +26,7 @@ class SampleDataService {
 
     // Sample Medicine 1: Paracetamol (started 2 weeks ago)
     final paracetamol = Medicine(
+      uid: 'sample',
       name: 'Paracetamol',
       dosage: '500mg',
       frequency: 'Daily',
@@ -43,6 +44,7 @@ class SampleDataService {
     // Sample Medicine 2: Loratadine (started 1 week ago)
     final oneWeekAgo = today.subtract(const Duration(days: 7));
     final loratadine = Medicine(
+      uid: 'sample',
       name: 'Loratadine',
       dosage: '50mg',
       frequency: 'Daily',
@@ -60,6 +62,7 @@ class SampleDataService {
     // Sample Medicine 3: Multivitamin (started 3 weeks ago)
     final threeWeeksAgo = today.subtract(const Duration(days: 21));
     final multivitamin = Medicine(
+      uid: 'sample',
       name: 'Multivitamin',
       dosage: '1 tablet',
       frequency: 'Daily',

@@ -182,6 +182,10 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
 
     try {
       final now = DateTime.now();
+      final currentUser = FirebaseAuth.instance.currentUser;
+      if (currentUser == null) {
+        throw StateError('You must be signed in to add a medicine.');
+      }
 
       // Map frequency to frequencyUnit
       String frequencyUnit;
@@ -200,7 +204,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
       }
 
       final medicine = Medicine(
-        uid: FirebaseAuth.instance.currentUser?.uid,
+        uid: currentUser.uid,
         name: _nameController.text.trim(),
         dosage: _dosageController.text.trim(),
         frequency: _frequency,
@@ -342,7 +346,7 @@ class _AddMedicineScreenState extends State<AddMedicineScreen> {
               _buildSectionTitle('Frequency'),
               const SizedBox(height: 8),
               DropdownButtonFormField<String>(
-                value: _frequency,
+                initialValue: _frequency,
                 decoration: InputDecoration(
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(12),
