@@ -95,6 +95,28 @@ class ReminderScheduler {
         );
         if (firstFire == null) continue;
 
+        if (medicine.frequency == 'Monthly') {
+          final dateStr = firstFire.toIso8601String().split('T').first;
+          final existing = await db.query(
+            'schedules',
+            where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+            whereArgs: [medicineId, dateStr, timeStr],
+            limit: 1,
+          );
+          if (existing.isEmpty) {
+            await db.insert(
+              'schedules',
+              Schedule(
+                medicineId: medicineId,
+                scheduledDate: firstFire,
+                scheduledTime: timeStr,
+                status: 'pending',
+                createdAt: now,
+              ).toMap(),
+            );
+          }
+        }
+
         final idOffset = medicine.frequency == 'Weekly'
             ? index * 7 + weekday - 1
             : index;
@@ -108,7 +130,7 @@ class ReminderScheduler {
             body: 'It\'s time to take ${medicine.name}',
             firstFireDate: firstFire,
             matchDateTimeComponents: scheduleMode,
-            payload: 'reminder:$medicineId:$index:${medicine.frequency}',
+            payload: 'reminder:$medicineId:$index:${medicine.frequency}:${firstFire.millisecondsSinceEpoch}',
           );
           scheduledCount++;
         } catch (error) {

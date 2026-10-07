@@ -2,7 +2,9 @@ import 'dart:async';
 
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import 'package:flutter_timezone/flutter_timezone.dart';
+import 'package:medicine_reminder_app/models/medicine_model.dart';
 import 'package:medicine_reminder_app/services/db/sqlite_service.dart';
+import 'package:medicine_reminder_app/services/schedule_planner.dart';
 import 'package:sqflite/sqflite.dart';
 import 'package:timezone/timezone.dart' as tz;
 import 'package:timezone/data/latest.dart' as tz;
@@ -47,19 +49,18 @@ class NotificationService {
       FlutterLocalNotificationsPlugin();
 
   bool _initialized = false;
-  Function(int)? _onNotificationTapCallback;
-  int? _initialNotificationId;
+  Function(NotificationResponse)? _onNotificationTapCallback;
+  NotificationResponse? _initialNotificationResponse;
 
   /// Set callback for notification tap handling
-  void setNotificationTapCallback(Function(int) callback) {
+  void setNotificationTapCallback(Function(NotificationResponse) callback) {
     _onNotificationTapCallback = callback;
   }
 
-  /// Get the notification ID that launched the app (if any)
-  int? getInitialNotificationId() {
-    final id = _initialNotificationId;
-    _initialNotificationId = null; // Clear after reading
-    return id;
+  NotificationResponse? getInitialNotificationResponse() {
+    final response = _initialNotificationResponse;
+    _initialNotificationResponse = null;
+    return response;
   }
 
   /// Initialize notification service
@@ -110,8 +111,8 @@ class NotificationService {
     // Check for initial notification that launched the app
     final initialNotification = await _notifications.getNotificationAppLaunchDetails();
     if (initialNotification?.didNotificationLaunchApp == true) {
-      _initialNotificationId = initialNotification?.notificationResponse?.id;
-      debugPrint('📱 App launched by notification ID: $_initialNotificationId');
+      _initialNotificationResponse = initialNotification?.notificationResponse;
+      debugPrint('📱 App launched by notification ID: ${_initialNotificationResponse?.id}');
     }
 
     // Create notification channel for Android 8+ with high importance and sound
@@ -228,6 +229,32 @@ class NotificationService {
     if (payload.startsWith('at:')) {
       return DateTime.tryParse(payload.substring('at:'.length))?.toLocal().toString();
     }
+    if (payload.startsWith('reminder:')) {
+      final parts = payload.split(':');
+      if (parts.length < 5) return null;
+        final fireEpoch = int.tryParse(parts[4]);
+        final firstFire = fireEpoch == null
+          ? null
+          : DateTime.fromMillisecondsSinceEpoch(fireEpoch).toLocal();
+      if (firstFire == null) return null;
+      final now = tz.TZDateTime.now(tz.local);
+      if (parts[3] == 'Monthly') return firstFire.toLocal().toString();
+      final hour = firstFire.hour;
+      final minute = firstFire.minute;
+      if (parts[3] == 'Daily') {
+        var next = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+        if (!next.isAfter(now)) next = next.add(const Duration(days: 1));
+        return next.toString();
+      }
+      if (parts[3] == 'Weekly') {
+        final weekday = firstFire.weekday;
+        var next = tz.TZDateTime(tz.local, now.year, now.month, now.day, hour, minute);
+        while (next.weekday != weekday || !next.isAfter(now)) {
+          next = next.add(const Duration(days: 1));
+        }
+        return next.toString();
+      }
+    }
     return null;
   }
 
@@ -257,9 +284,8 @@ class NotificationService {
     }
 
     // Handle notification tap - call the callback with notification ID
-    final notificationId = response.id;
-    if (notificationId != null && _onNotificationTapCallback != null) {
-      _onNotificationTapCallback!(notificationId);
+    if (_onNotificationTapCallback != null) {
+      _onNotificationTapCallback!(response);
     }
   }
 
@@ -802,30 +828,33 @@ Future<void> _processMedicineAction(NotificationResponse response) async {
     int? medicineId;
     int? scheduleId;
     int? reminderIndex;
-    String? scheduledTime;
+    String? frequency;
+    Map<String, dynamic>? reminderMedicine;
 
-    if (payload.length == 4 && payload[0] == 'reminder') {
+    if (payload.length >= 5 && payload[0] == 'reminder') {
       medicineId = int.tryParse(payload[1]);
       reminderIndex = int.tryParse(payload[2]);
-      final medicine = medicineId == null
-          ? <String, Object?>{}
-          : (await db.query(
-              'medicines',
-              where: 'id = ?',
-              whereArgs: [medicineId],
-              limit: 1,
-            )).firstOrNull ?? <String, Object?>{};
-      final reminderTimes = (medicine['reminderTimes'] as String? ?? '')
+      if (medicineId == null) return;
+      final medicineRows = await db.query(
+        'medicines',
+        where: 'id = ?',
+        whereArgs: [medicineId],
+        limit: 1,
+      );
+      if (medicineRows.isEmpty) return;
+      reminderMedicine = medicineRows.first;
+      frequency = payload[3];
+      final reminderTimes =
+          (reminderMedicine['reminderTimes'] as String? ?? '')
           .split(',')
           .map((value) => value.trim())
           .toList();
-      if (medicineId == null ||
-          reminderIndex == null ||
+      if (reminderIndex == null ||
           reminderIndex < 0 ||
           reminderIndex >= reminderTimes.length) {
         return;
       }
-      scheduledTime = reminderTimes[reminderIndex];
+      final scheduledTime = reminderTimes[reminderIndex];
       final now = DateTime.now();
       final pending = await db.query(
         'schedules',
@@ -854,6 +883,8 @@ Future<void> _processMedicineAction(NotificationResponse response) async {
       limit: 1,
     );
     if (schedule.isEmpty) return;
+    final monthlyIndex = reminderIndex;
+    final monthlyMedicine = reminderMedicine;
 
     if (actionId == 'snooze_10') {
       final medicine = await db.query(
@@ -870,6 +901,17 @@ Future<void> _processMedicineAction(NotificationResponse response) async {
         title: 'Medicine Reminder',
         body: 'Snoozed: it\'s time to take ${medicine.first['name']}',
       );
+      if (frequency == 'Monthly' &&
+          monthlyIndex != null &&
+          monthlyMedicine != null) {
+        await _rearmMonthlyReminder(
+          service,
+          db,
+          medicineId,
+          monthlyIndex,
+          monthlyMedicine,
+        );
+      }
       return;
     }
 
@@ -934,8 +976,69 @@ Future<void> _processMedicineAction(NotificationResponse response) async {
         scheduledDate: tz.TZDateTime.now(tz.local).add(const Duration(seconds: 1)),
       );
     }
+    if (frequency == 'Monthly' &&
+        monthlyMedicine != null &&
+        monthlyIndex != null) {
+      await _rearmMonthlyReminder(
+        service,
+        db,
+        medicineId,
+        monthlyIndex,
+        monthlyMedicine,
+      );
+    }
   } catch (error) {
     debugPrint('Could not process notification action: $error');
   }
+}
+
+Future<void> _rearmMonthlyReminder(
+  NotificationService service,
+  Database db,
+  int medicineId,
+  int reminderIndex,
+  Map<String, dynamic> medicineRow,
+) async {
+  final medicine = Medicine.fromMap(medicineRow);
+  if (reminderIndex >= medicine.reminderTimes.length) return;
+  final timeParts = medicine.reminderTimes[reminderIndex].split(':');
+  if (timeParts.length != 2) return;
+  final hour = int.tryParse(timeParts[0]);
+  final minute = int.tryParse(timeParts[1]);
+  if (hour == null || minute == null) return;
+
+  final time = TimeOfDay(hour: hour, minute: minute);
+  final next = MedicineSchedulePlanner.nextOccurrence(
+    medicine: medicine,
+    time: time,
+    now: tz.TZDateTime.now(tz.local),
+  );
+  if (next == null) return;
+
+  final scheduledTime = medicine.reminderTimes[reminderIndex];
+  final dateStr = next.toIso8601String().split('T').first;
+  final existing = await db.query(
+    'schedules',
+    where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
+    whereArgs: [medicineId, dateStr, scheduledTime],
+    limit: 1,
+  );
+  if (existing.isEmpty) {
+    await db.insert('schedules', {
+      'medicineId': medicineId,
+      'scheduledDate': next.toIso8601String(),
+      'scheduledTime': scheduledTime,
+      'status': 'pending',
+      'createdAt': tz.TZDateTime.now(tz.local).toIso8601String(),
+    });
+  }
+
+  await service.scheduleMedicineReminder(
+    id: medicineId * 100 + reminderIndex,
+    title: 'Medicine Reminder',
+    body: 'It\'s time to take ${medicine.name}',
+    firstFireDate: next,
+    payload: 'reminder:$medicineId:$reminderIndex:Monthly:${next.millisecondsSinceEpoch}',
+  );
 }
 

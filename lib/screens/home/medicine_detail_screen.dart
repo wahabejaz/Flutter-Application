@@ -352,14 +352,13 @@ class _MedicineDetailScreenState extends State<MedicineDetailScreen> {
           IconButton(
             icon: const Icon(Icons.edit),
             onPressed: () async {
-              final result = await Navigator.pushNamed(
-                context,
+              final navigator = Navigator.of(context);
+              final result = await navigator.pushNamed(
                 '/edit-medicine',
                 arguments: _medicine,
               );
               if (result == true && mounted) {
-                // Reload medicine data after edit
-                await _loadMedicine();
+                navigator.pop('edited');
               }
             },
           ),

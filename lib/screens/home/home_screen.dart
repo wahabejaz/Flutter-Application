@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_local_notifications/flutter_local_notifications.dart';
 import '../../routes/app_routes.dart';
 import '../../config/app_colors.dart';
+import '../../models/medicine_model.dart';
 import '../../services/db/sqlite_service.dart';
 import '../../services/reminder_scheduler.dart';
 import '../../services/notification_service.dart';
@@ -84,23 +86,43 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     _notificationService.setNotificationTapCallback(_handleNotificationTap);
     
     // Check if app was launched by a notification
-    final initialNotificationId = _notificationService.getInitialNotificationId();
-    if (initialNotificationId != null) {
+    final initialNotification =
+        _notificationService.getInitialNotificationResponse();
+    if (initialNotification != null) {
       // Handle the initial notification after a short delay to ensure UI is ready
       Future.delayed(const Duration(milliseconds: 500), () {
-        _handleNotificationTap(initialNotificationId);
+        _handleNotificationTap(initialNotification);
       });
     }
   }
 
-  Future<void> _handleNotificationTap(int notificationId) async {
+  Future<void> _handleNotificationTap(NotificationResponse response) async {
+    final notificationId = response.id;
+    final payload = response.payload;
+    if (response.actionId == 'taken' || response.actionId == 'snooze_10') {
+      return;
+    }
+    if (notificationId == null ||
+        notificationId < 100 ||
+        payload == null ||
+        !payload.startsWith('reminder:')) {
+      return;
+    }
+
+    final payloadParts = payload.split(':');
+    if (payloadParts.length < 5) return;
+    final medicineId = int.tryParse(payloadParts[1]);
+    final reminderIndex = int.tryParse(payloadParts[2]);
+    final frequency = payloadParts[3];
+    if (medicineId == null ||
+        reminderIndex == null ||
+        notificationId ~/ 100 != medicineId) {
+      return;
+    }
+
     debugPrint('🔔 Notification tapped with ID: $notificationId');
 
     try {
-      // Decode notification ID: medicineId * 100 + reminderIndex
-      final medicineId = notificationId ~/ 100;
-      final reminderIndex = notificationId % 100;
-
       debugPrint('🔍 Decoded: medicineId=$medicineId, reminderIndex=$reminderIndex');
 
       // Find the medicine
@@ -116,6 +138,16 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
         return;
       }
 
+      if (frequency == 'Monthly') {
+        try {
+          await _scheduler.scheduleMedicineReminders(
+            Medicine.fromMap(medicineResult.first),
+          );
+        } catch (e) {
+          debugPrint('Failed to re-arm monthly reminder after tap: $e');
+        }
+      }
+
       final medicine = medicineResult.first;
       final reminderTimes = (medicine['reminderTimes'] as String?)?.split(',') ?? [];
 
@@ -127,15 +159,19 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
       final reminderTime = reminderTimes[reminderIndex].trim();
       debugPrint('✅ Found reminder time: $reminderTime for medicine: ${medicine['name']}');
 
-      // Find today's schedule for this medicine and time
-      final today = DateTime.now();
-      final todayStr = DateFormat('yyyy-MM-dd').format(today);
-
-      final scheduleResult = await db.query(
+      final pendingSchedules = await db.query(
         'schedules',
-        where: 'medicineId = ? AND date(scheduledDate) = ? AND scheduledTime = ?',
-        whereArgs: [medicineId, todayStr, reminderTime],
+        where: 'medicineId = ? AND scheduledTime = ? AND status = ?',
+        whereArgs: [medicineId, reminderTime, _statusPending],
       );
+      final today = DateTime.now();
+      final scheduleResult = pendingSchedules.where((schedule) {
+        final scheduledDate =
+            DateTime.parse(schedule['scheduledDate'] as String).toLocal();
+        return scheduledDate.year == today.year &&
+            scheduledDate.month == today.month &&
+            scheduledDate.day == today.day;
+      }).toList();
 
       if (scheduleResult.isEmpty) {
         debugPrint('❌ No schedule found for medicine $medicineId at $reminderTime today');
@@ -705,8 +741,7 @@ class _HomeScreenState extends State<HomeScreen> with WidgetsBindingObserver {
     return GestureDetector(
       onTap: () async {
         final result = await Navigator.pushNamed(context, AppRoutes.medicineDetail, arguments: medicineId);
-        if (result == 'deleted' && mounted) {
-          // Refresh the medicine list after deletion
+        if ((result == 'deleted' || result == 'edited') && mounted) {
           await _loadTodayData();
         }
       },
