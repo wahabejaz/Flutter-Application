@@ -6,13 +6,6 @@ import 'sqlite_service.dart';
 class MedicineDAO {
   final SQLiteService _dbService = SQLiteService();
 
-  /// Get all medicines (for sample data - not user scoped)
-  Future<List<Medicine>> getAllMedicinesUnscoped() async {
-    final db = await _dbService.database;
-    final List<Map<String, dynamic>> maps = await db.query('medicines');
-    return List.generate(maps.length, (i) => Medicine.fromMap(maps[i]));
-  }
-
   /// Get all medicines for a user
   Future<List<Medicine>> getAllMedicines(String uid) async {
     final db = await _dbService.database;
@@ -73,20 +66,6 @@ class MedicineDAO {
         whereArgs: [id],
       );
     });
-  }
-
-  /// Get medicines for today's schedule
-  Future<List<Medicine>> getMedicinesForToday() async {
-    final db = await _dbService.database;
-    final today = DateTime.now();
-    final todayStr = today.toIso8601String().split('T')[0]; // Get YYYY-MM-DD format
-
-    final List<Map<String, dynamic>> maps = await db.query(
-      'medicines',
-      where: 'date(startDate) <= ? AND date(endDate) >= ?',
-      whereArgs: [todayStr, todayStr],
-    );
-    return List.generate(maps.length, (i) => Medicine.fromMap(maps[i]));
   }
 
   /// Update medicine stock count

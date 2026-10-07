@@ -48,6 +48,8 @@ class NotificationService {
   final FlutterLocalNotificationsPlugin _notifications =
       FlutterLocalNotificationsPlugin();
 
+  static int lowStockNotificationIdForMedicine(int medicineId) => -medicineId;
+
   bool _initialized = false;
   Function(NotificationResponse)? _onNotificationTapCallback;
   NotificationResponse? _initialNotificationResponse;
@@ -633,6 +635,35 @@ class NotificationService {
 
   Future<void> cancelAllNotifications() async {
     await _notifications.cancelAll();
+  }
+
+  Future<void> cancelMedicineNotifications(int medicineId) async {
+    for (var index = 0; index < 100; index++) {
+      try {
+        await _notifications.cancel(medicineId * 100 + index);
+      } catch (e) {
+        debugPrint('Failed to cancel reminder notification: $e');
+      }
+    }
+    try {
+      await _notifications.cancel(lowStockNotificationIdForMedicine(medicineId));
+    } catch (e) {
+      debugPrint('Failed to cancel low-stock notification: $e');
+    }
+
+    try {
+      final pending = await _notifications.pendingNotificationRequests();
+      for (final notification in pending) {
+        final payload = notification.payload?.split(':') ?? const <String>[];
+        if (payload.length == 3 &&
+            payload[0] == 'snooze' &&
+            int.tryParse(payload[2]) == medicineId) {
+          await _notifications.cancel(notification.id);
+        }
+      }
+    } catch (e) {
+      debugPrint('Failed to cancel snoozed reminder notifications: $e');
+    }
   }
 
   /// Debug method to print all pending notifications to terminal

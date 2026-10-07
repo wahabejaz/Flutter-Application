@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../routes/app_routes.dart';
 import '../../config/app_colors.dart';
+import '../../services/auth_service.dart';
 
 /// Verify Email Screen
 /// Screen shown to users who need to verify their email before accessing the app
@@ -189,7 +190,7 @@ class _VerifyEmailScreenState extends State<VerifyEmailScreen> {
 
   Future<void> _logout() async {
     try {
-      await FirebaseAuth.instance.signOut();
+      await AuthService().signOut();
       if (mounted) {
         Navigator.pushNamedAndRemoveUntil(context, AppRoutes.signin, (route) => false);
       }

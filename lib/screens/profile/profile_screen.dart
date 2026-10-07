@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:firebase_auth/firebase_auth.dart';
 import '../../routes/app_routes.dart';
 import '../../config/app_colors.dart';
+import '../../services/auth_service.dart';
 import '../../services/user_data_service.dart';
 
 /// Profile Screen
@@ -172,9 +173,17 @@ class _ProfileScreenState extends State<ProfileScreen> {
               width: double.infinity,
               child: ElevatedButton(
                 onPressed: () async {
-                  await FirebaseAuth.instance.signOut();
-                  if (context.mounted) {
-                    Navigator.pushReplacementNamed(context, AppRoutes.signin);
+                  try {
+                    await AuthService().signOut();
+                    if (context.mounted) {
+                      Navigator.pushReplacementNamed(context, AppRoutes.signin);
+                    }
+                  } catch (e) {
+                    if (context.mounted) {
+                      ScaffoldMessenger.of(context).showSnackBar(
+                        SnackBar(content: Text('Sign out failed: $e')),
+                      );
+                    }
                   }
                 },
                 style: ElevatedButton.styleFrom(

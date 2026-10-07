@@ -2,7 +2,9 @@ import 'package:firebase_auth/firebase_auth.dart' as firebase_auth;
 import 'package:google_sign_in/google_sign_in.dart';
 import 'package:sqflite/sqflite.dart';
 import '../models/user_model.dart';
+import 'db/medicine_dao.dart';
 import 'db/sqlite_service.dart';
+import 'notification_service.dart';
 
 /// Authentication Service
 /// Handles user authentication with Firebase Auth and Google Sign In
@@ -84,8 +86,22 @@ class AuthService {
 
   /// Sign out
   Future<void> signOut() async {
-    await _googleSignIn.signOut();
-    await _auth.signOut();
+    final user = _auth.currentUser;
+    if (user != null) {
+      final medicines = await MedicineDAO().getAllMedicines(user.uid);
+      final notifications = NotificationService();
+      for (final medicine in medicines) {
+        if (medicine.id != null) {
+          await notifications.cancelMedicineNotifications(medicine.id!);
+        }
+      }
+    }
+
+    try {
+      await _googleSignIn.signOut();
+    } finally {
+      await _auth.signOut();
+    }
   }
 
   /// Send password reset email

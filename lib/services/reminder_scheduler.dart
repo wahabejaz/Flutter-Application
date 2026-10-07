@@ -12,7 +12,8 @@ import 'package:timezone/timezone.dart' as tz;
 /// Reminder Scheduler Service
 /// Handles scheduling reminders for medicines and creating schedule entries
 class ReminderScheduler {
-  static int lowStockNotificationId(int medicineId) => -medicineId;
+  static int lowStockNotificationId(int medicineId) =>
+      NotificationService.lowStockNotificationIdForMedicine(medicineId);
 
   final NotificationService _notificationService;
   final SQLiteService _dbService = SQLiteService();
@@ -156,22 +157,7 @@ class ReminderScheduler {
 
   /// Cancel all reminders for a medicine
   Future<void> cancelMedicineReminders(int medicineId) async {
-    // IDs 0 through 99 are reserved for this medicine's reminder notifications.
-    for (int i = 0; i < 100; i++) {
-      final notificationId = medicineId * 100 + i;
-      try {
-        await _notificationService.cancelNotification(notificationId);
-      } catch (e) {
-        // Continue canceling others
-      }
-    }
-    try {
-      await _notificationService.cancelNotification(
-        lowStockNotificationId(medicineId),
-      );
-    } catch (e) {
-      debugPrint('Failed to cancel low-stock notification: $e');
-    }
+    await _notificationService.cancelMedicineNotifications(medicineId);
 
     final db = await _dbService.database;
     final pendingSchedules = await db.query(
